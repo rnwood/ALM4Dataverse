@@ -1,0 +1,54 @@
+stages:
+  - stage: Build
+    displayName: 'Build'
+    jobs:
+      - job: BuildJob
+        displayName: 'Build'
+        steps:
+        - checkout: self
+          persistCredentials: true
+          fetchDepth: 1
+          displayName: 'Checkout Source Code'
+          path: self
+        - checkout: ALM4Dataverse
+          fetchDepth: 1
+          displayName: 'Checkout ALM Templates Repository'
+          path: alm
+
+
+        - pwsh: |
+            write-host "##vso[build.updatebuildnumber]$(Build.Repository.Name)-$(Build.SourceBranchName)-$(Get-Date -format 'yyyy-MM-dd-HHmmss')"
+          displayName: 'Set Build Number'
+
+        - task: PowerPlatformToolInstaller@2
+          displayName: 'Install Power Platform Tools'
+          inputs:
+            AddToolsToPath: true
+
+        - pwsh: |
+            & "$(Pipeline.Workspace)/alm/pipelines/scripts/installdependencies.ps1"
+            & "$(Pipeline.Workspace)/alm/pipelines/scripts/build.ps1" `
+              -SourceDirectory "$(Pipeline.Workspace)/self" `
+              -ArtifactStagingDirectory "$(Build.ArtifactStagingDirectory)"
+          displayName: 'Install Dependencies and Build artifacts'
+          workingDirectory: '$(Pipeline.Workspace)/self'
+
+        - task: PublishPipelineArtifact@1
+          displayName: 'Publish Artifacts'
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)'
+            artifact: 'artifacts'
+
+        - pwsh: |
+            $ErrorActionPreference = 'Stop'
+            Write-Host "Tagging source repository with build version v$(Build.BuildNumber)"
+            git config user.email "$(Build.RequestedForEmail)"
+            if ($LASTEXITCODE -ne 0) { throw "git config user.email failed with exit code $LASTEXITCODE" }
+            git config user.name "$(Build.RequestedFor)"
+            if ($LASTEXITCODE -ne 0) { throw "git config user.name failed with exit code $LASTEXITCODE" }
+            git tag -a "v$(Build.BuildNumber)" -m "Build version $(Build.BuildNumber)"
+            if ($LASTEXITCODE -ne 0) { throw "git tag failed with exit code $LASTEXITCODE" }
+            git push origin "v$(Build.BuildNumber)"
+            if ($LASTEXITCODE -ne 0) { throw "git push failed with exit code $LASTEXITCODE" }
+          displayName: 'Tag Source with Build Version'
+          workingDirectory: '$(Pipeline.Workspace)/self'

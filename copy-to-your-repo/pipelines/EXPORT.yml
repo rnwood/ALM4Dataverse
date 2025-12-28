@@ -1,0 +1,19 @@
+trigger: none # Run manually when you want to capture changes from dev
+name: Export from Dev-${{ variables['Build.SourceBranchName'] }}
+appendCommitMessageToRunName: false
+
+resources:
+  repositories:
+    - repository: ALM4Dataverse
+      type: git
+      name: ALM4Dataverse
+
+parameters:
+- name: commitMessage
+  type: string
+  displayName: 'Commit message for exported changes'
+
+stages:
+- template: pipelines/templates/export.yml@ALM4Dataverse
+  parameters:
+    commitMessage: ${{ parameters.commitMessage }}

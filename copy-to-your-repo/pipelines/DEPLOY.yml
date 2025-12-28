@@ -1,0 +1,37 @@
+trigger: none # Triggered by build completion or manually
+
+resources:
+  pipelines:
+    - pipeline: build
+      source: 'BUILD'
+      trigger:
+        branches:
+          include:
+            - main
+            - release/*
+  repositories:
+    - repository: ALM4Dataverse
+      type: git
+      name: ALM4Dataverse
+
+
+name: 'Deploy $(resources.pipeline.build.runName)'
+appendCommitMessageToRunName: false
+
+stages:
+  # Deploy to Test (no dependencies)
+  - template: pipelines/templates/stages/deploy-environment.yml@ALM4Dataverse
+    parameters:
+      environmentName: Test-main
+
+  # # Deploy to UAT (depends on Test)
+  # - template: templates/deploy-environment.yml
+  #   parameters:
+  #     environmentName: UAT-main
+  #     dependsOn: Test-main
+
+  # # Deploy to Production (depends on UAT)
+  # - template: templates/deploy-environment.yml
+  #   parameters:
+  #     environmentName: Prod
+  #     dependsOn: UAT-main

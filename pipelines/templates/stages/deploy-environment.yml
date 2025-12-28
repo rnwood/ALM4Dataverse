@@ -1,0 +1,50 @@
+parameters:
+  - name: environmentName
+    type: string
+  - name: dependsOn
+    type: string
+    default: ''
+
+stages:
+  - stage: Deploy_${{ replace(parameters.environmentName, '-', '_') }}
+    displayName: 'Deploy to ${{ parameters.environmentName }}'
+    ${{ if ne(parameters.dependsOn, '') }}:
+      dependsOn: Deploy_${{ replace(parameters.dependsOn, '-', '_') }}
+    
+    # Azure DevOps Environment for approvals
+    # Convention: environment name matches parameter
+    jobs:
+      - deployment: Deploy
+        displayName: 'Deploy'
+        environment: ${{ parameters.environmentName }}
+        
+        variables:
+          # Convention-based variable group: Environment-{EnvironmentName}
+          - group: 'Environment-${{ parameters.environmentName }}'
+        
+        strategy:
+          runOnce:
+            deploy:
+              steps:               
+                - task: PowerPlatformToolInstaller@2
+                  displayName: 'Install Power Platform Tools'
+                  inputs:
+                    AddToolsToPath: true
+                
+                - task: PowerPlatformSetConnectionVariables@2
+                  displayName: 'Set Connection Variables'
+                  name: connectionVariables
+                  inputs:
+                    authenticationType: 'PowerPlatformSPN'
+                    PowerPlatformSPN: '${{ parameters.environmentName }}'
+                
+                - pwsh: |
+                    & "$(Pipeline.Workspace)/build/artifacts/pipelines/scripts/installdependencies.ps1"
+                    & "$(Pipeline.Workspace)/build/artifacts/pipelines/scripts/connect.ps1" -ConnectionString "$(connectionVariables.BuildTools.DataverseConnectionString)"
+                    
+                    # Run the deployment script FROM THE ARTIFACTS
+                    # This ensures the script version matches the solution version being deployed
+                    & "$(Pipeline.Workspace)/build/artifacts/pipelines/scripts/deploy.ps1" `
+                      -ArtifactsPath "$(Pipeline.Workspace)/build/artifacts"
+                  displayName: 'Connect and Run Deployment Script from Artifacts'
+                  workingDirectory: '$(Pipeline.Workspace)/build/artifacts'

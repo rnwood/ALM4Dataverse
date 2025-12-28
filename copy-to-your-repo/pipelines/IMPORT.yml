@@ -1,0 +1,15 @@
+trigger: none # Run manually when you want to import changes from source control
+
+name: Import to Dev-${{ variables['Build.SourceBranchName'] }}
+
+resources:
+  repositories:
+    - repository: ALM4Dataverse
+      type: git
+      name: ALM4Dataverse
+
+variables:
+- group: Environment-Dev-${{ variables['Build.SourceBranchName'] }}
+
+stages:
+- template: pipelines/templates/import.yml@ALM4Dataverse
