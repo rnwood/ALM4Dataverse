@@ -723,7 +723,7 @@ if ($index -eq ($menuItems.Count - 1)) {
 
     $name = Read-Host 'Enter the name for the new Azure DevOps project'    
 
-    $created = New-AzDoProject -Organization $orgName -ProjectName $name -Visibility private -SourceControl git
+    $created = New-AzDoProject -Organization $orgName -ProjectName $name -Visibility private
 
     # Refresh VSTeam project list
     $projects = Get-VSTeamProject
@@ -1044,15 +1044,14 @@ function Sync-CopyToYourRepoIntoGitRepo {
         }
 
  
-        Write-Section "Syncing pipeline YAMLs into main repository"
+        Write-Section "Syncing pipeline files into main repository"
         Write-Host "Source: $SourceRoot" -ForegroundColor DarkGray
         Write-Host "Target: $cloneRoot" -ForegroundColor DarkGray
 
         # Copy-Item with '*' won't include hidden items; use Get-ChildItem -Force instead.
         $top = Get-ChildItem -LiteralPath $SourceRoot -Force
         foreach ($item in $top) {
-            $dest = Join-Path $cloneRoot $item.Name
-            Copy-Item -LiteralPath $item.FullName -Destination $dest -Recurse -Force -ErrorAction Stop
+            Copy-Item -LiteralPath $item.FullName -Destination $cloneRoot -Recurse -Force -ErrorAction Stop
         }
       
         
@@ -1797,7 +1796,8 @@ function Get-DataverseEnvironmentsSelection {
             Write-Host "No environments selected." -ForegroundColor DarkGray
         }
         else {
-            $selectedEnvironments | Format-Table -Property ShortName, FriendlyName, Url -AutoSize
+            Write-Host "Selected environments ($($selectedEnvironments.Count)):" -ForegroundColor Green
+            $selectedEnvironments | Format-Table -Property ShortName, FriendlyName, Url -AutoSize | Out-Host
         }
         Write-Host ""
 
@@ -1829,13 +1829,23 @@ function Get-DataverseEnvironmentsSelection {
                     }
 
                     if ($connection) {
+
+                        $url =  $connection.ConnectedOrgPublishedEndpoints["WebApplication"]
+
+                      if ($selectedEnvironments | Where-Object { $_.Url -eq $url }) {
+                            Write-Host "An environment with Url '$url' is already selected." -ForegroundColor Red
+                            Start-Sleep -Seconds 2
+                            continue
+                        }
+
                         $shortName = Read-Host "Enter a short name for this environment (e.g. TEST, UAT, PROD)"
                         if ([string]::IsNullOrWhiteSpace($shortName)) {
                             Write-Host "Short name is required." -ForegroundColor Red
                             Start-Sleep -Seconds 2
                             continue
                         }
-
+                        $shortName = $shortName.Replace("-$branchName", "").Trim() + "-$branchName"
+ 
                         if ($selectedEnvironments | Where-Object { $_.ShortName -eq $shortName }) {
                             Write-Host "An environment with short name '$shortName' is already selected." -ForegroundColor Red
                             Start-Sleep -Seconds 2
@@ -1845,7 +1855,7 @@ function Get-DataverseEnvironmentsSelection {
                         $envInfo = [pscustomobject]@{
                             ShortName = $shortName
                             FriendlyName = $connection.ConnectedOrgFriendlyName
-                            Url = $connection.ConnectedOrgPublishedEndpoints["WebApplication"]
+                            Url = $url
                         }
                         $selectedEnvironments += $envInfo
                     }
@@ -1930,7 +1940,8 @@ function Update-DeployPipelineInMainRepo {
             & git config user.name "ALM4Dataverse Setup" 2>$null
             & git config user.email "setup@alm4dataverse.local" 2>$null
             
-            & git commit -m "Configure deployment environments: $($Environments.ShortName -join ', ')"
+            $envNames = $Environments | ForEach-Object { $_.ShortName }
+            & git commit -m "Configure deployment environments: $($envNames -join ', ')"
             
             & git -c "http.extraheader=AUTHORIZATION: bearer $AccessToken" push origin $branch
             if ($LASTEXITCODE -ne 0) {
@@ -1965,6 +1976,18 @@ $environments = Get-DataverseEnvironmentsSelection
 
 if ($environments.Count -gt 0) {
     Update-DeployPipelineInMainRepo -Environments $environments -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
+
+    foreach ($env in $environments) {
+        [void](Ensure-AzDoVariableGroupExists `
+            -Organization $orgName `
+            -Project $selectedProject.Name `
+            -ProjectId $selectedProject.Id `
+            -GroupName "Environment-$($env.ShortName)" `
+            -Variables @{
+            'CONNREF_example_uniquename' = 'connectionid'
+            'ENVVAR_example_uniquename'  = 'value'
+        })
+    }
 }
 
 #endregion
