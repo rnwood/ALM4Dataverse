@@ -829,7 +829,7 @@ $hasCommits = Test-AzDoGitRepositoryHasCommits -Organization $orgName -Project $
 if (-not $hasCommits) {
     Write-Host "Repository '$sharedRepoName' has no commits. Seeding it from the example repo..." -ForegroundColor Yellow
 
-    $seedSourceUrl = 'https://dev.azure.com/rnwood/ALM4Dataverse-Example/_git/ALM4Dataverse'
+    $seedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
     try {
         $import = Start-AzDoGitRepositoryImport -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id -SourceGitUrl $seedSourceUrl
         [void](Wait-AzDoGitRepositoryImport -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id -ImportResponse $import -TimeoutSeconds 600)
@@ -846,7 +846,7 @@ else {
     # Offer an interactive, automated rebase.
     # This uses PowerGit module instead of git.exe
     if (Read-YesNo -Prompt "Rebase '$sharedRepoName' onto the example repo now? This may rewrite history." -DefaultNo) {
-        $seedSourceUrl = 'https://dev.azure.com/rnwood/ALM4Dataverse-Example/_git/ALM4Dataverse'
+        $seedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
         $destUrl = $repo.remoteUrl
         if (-not $destUrl) {
             throw "Could not determine remoteUrl for repository '$sharedRepoName'."
