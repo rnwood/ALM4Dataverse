@@ -1,18 +1,11 @@
 parameters:
   - name: environmentName
     type: string
-  - name: dependsOn
-    type: string
-    default: ''
 
 stages:
   - stage: Deploy_${{ replace(parameters.environmentName, '-', '_') }}
     displayName: 'Deploy to ${{ parameters.environmentName }}'
-    ${{ if ne(parameters.dependsOn, '') }}:
-      dependsOn: Deploy_${{ replace(parameters.dependsOn, '-', '_') }}
     
-    # Azure DevOps Environment for approvals
-    # Convention: environment name matches parameter
     jobs:
       - deployment: Deploy
         displayName: 'Deploy'

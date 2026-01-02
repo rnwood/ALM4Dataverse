@@ -8,24 +8,19 @@ param(
     [switch]$UseDeviceAuthentication,
 
     [Parameter()]
-    [string]$Organization
-
-
+    [string]$ALM4DataverseRef = 'stable'
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+#region Common Functions
+
 function Write-Section {
     param([Parameter(Mandatory)][string]$Message)
-    Write-Host "" 
+    Clear-Host
     Write-Host "==== $Message ====" -ForegroundColor Cyan
-}
-
-function Get-ModulePathDelimiter {
-    # Use platform-agnostic delimiter for PSModulePath.
-    # ';' on Windows, ':' on Unix.
-    return [System.IO.Path]::PathSeparator
+    Write-Host ""
 }
 
 function New-DirectoryIfMissing {
@@ -33,6 +28,70 @@ function New-DirectoryIfMissing {
     if (-not (Test-Path -LiteralPath $Path)) {
         New-Item -ItemType Directory -Path $Path -Force | Out-Null
     }
+}
+
+function Select-FromMenu {
+    <#
+    .SYNOPSIS
+        Simple interactive console menu selection using PSMenu.
+
+    .DESCRIPTION
+        Arrow keys to move, Enter to select, Esc to cancel.
+
+        This function wraps the PSMenu module's Show-Menu function.
+    #>
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Title,
+        [Parameter(Mandatory)][string[]]$Items
+    )
+
+    if ($Items.Count -eq 0) { return $null }
+
+    # Use PSMenu's Show-Menu with title display
+    Write-Host $Title -ForegroundColor Green
+    Write-Host "" # Add spacing
+    
+    $selectedIndex = Show-Menu -MenuItems $Items -ReturnIndex
+    return $selectedIndex
+}
+
+function Read-YesNo {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Prompt,
+        [Parameter()][switch]$DefaultNo
+    )
+
+    $suffix = if ($DefaultNo) { ' [y/N]' } else { ' [Y/n]' }
+    $answer = Read-Host ($Prompt + $suffix)
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+        return (-not $DefaultNo)
+    }
+    return ($answer.Trim().ToLowerInvariant() -in @('y', 'yes'))
+}
+
+function ConvertFrom-GitRefToBranchName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Ref
+    )
+
+    if ($Ref -match '^refs/heads/(.+)$') {
+        return $Matches[1]
+    }
+    return $Ref
+}
+
+#endregion
+
+#region Initialization
+
+function Get-ModulePathDelimiter {
+    # Use platform-agnostic delimiter for PSModulePath.
+    # ';' on Windows, ':' on Unix.
+    return [System.IO.Path]::PathSeparator
 }
 
 function Install-NuGetProviderIfMissing {
@@ -96,183 +155,122 @@ function Import-RequiredModuleVersion {
         throw "Failed to import $Name version $targetVersion. Loaded version: $((Get-Module -Name $Name | Select-Object -First 1).Version)"
     }
 
-    Write-Host "Loaded $Name $($loaded.Version)" -ForegroundColor Green
+    Write-Host "Loaded $Name $($loaded.Version)"
 }
 
-function ConvertTo-AzDoOrganizationName {
-    param([Parameter(Mandatory)][string]$InputText)
-
-    $text = $InputText.Trim()
-
-    # Accept:
-    # - myorg
-    # - https://dev.azure.com/myorg
-    # - https://dev.azure.com/myorg/
-    # - dev.azure.com/myorg
-    if ($text -match 'dev\.azure\.com/([^/]+)') {
-        return $Matches[1]
-    }
-
-    # Also accept legacy Visual Studio URLs like https://myorg.visualstudio.com
-    if ($text -match '^https?://([^\.]+)\.visualstudio\.com/?$') {
-        return $Matches[1]
-    }
-
-    return $text
-}
-
-function Select-FromMenu {
-    <#
-    .SYNOPSIS
-        Simple interactive console menu selection using PSMenu.
-
-    .DESCRIPTION
-        Arrow keys to move, Enter to select, Esc to cancel.
-
-        This function wraps the PSMenu module's Show-Menu function.
-    #>
-
-    [CmdletBinding()]
+function Install-PortableGit {
     param(
-        [Parameter(Mandatory)][string]$Title,
-        [Parameter(Mandatory)][string[]]$Items
+        [Parameter(Mandatory)][string]$Destination
     )
 
-    if ($Items.Count -eq 0) { return $null }
-
-    # Check if PSMenu is available and host supports it
-    $canUseInteractiveMenu = $true
-    try {
-        # Test if console supports interactive menu
-        [void][System.Console]::KeyAvailable
-        
-        # Test if Show-Menu command is available
-        if (-not (Get-Command Show-Menu -ErrorAction SilentlyContinue)) {
-            $canUseInteractiveMenu = $false
-        }
-    }
-    catch {
-        $canUseInteractiveMenu = $false
+    $gitDir = Join-Path $Destination "Git"
+    $gitExe = Join-Path $gitDir "bin\git.exe"
+    
+    if (Test-Path $gitExe) {
+        Write-Host "Git already available at: $gitExe"
+        return $gitDir
     }
 
-    if (-not $canUseInteractiveMenu -or -not $Host.UI.RawUI) {
-        # Fallback to numeric prompt if interactive menu isn't available
-        Write-Host $Title -ForegroundColor Cyan
-        for ($i = 0; $i -lt $Items.Count; $i++) {
-            Write-Host ("[{0}] {1}" -f ($i + 1), $Items[$i])
-        }
-        while ($true) {
-            $choice = Read-Host "Enter a number (1-$($Items.Count)) or press Enter to cancel"
-            if ([string]::IsNullOrWhiteSpace($choice)) { return $null }
-            $n = 0
-            if ([int]::TryParse($choice, [ref]$n) -and $n -ge 1 -and $n -le $Items.Count) {
-                return ($n - 1)
-            }
-        }
-    }
-
-    # Use PSMenu's Show-Menu with title display
-    Write-Host $Title -ForegroundColor Cyan
-    Write-Host "" # Add spacing
+    Write-Host "Downloading portable Git..." -ForegroundColor Yellow
+    $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.52.0.windows.1/PortableGit-2.52.0-64-bit.7z.exe"
+    $gitInstaller = Join-Path $Destination "PortableGit.exe"
     
     try {
-        $selectedIndex = Show-Menu -MenuItems $Items -ReturnIndex
-        return $selectedIndex
-    }
-    catch {
-        # If Show-Menu fails for any reason, fall back to numeric selection
-        Write-Host "Interactive menu failed, falling back to text selection..." -ForegroundColor Yellow
-        for ($i = 0; $i -lt $Items.Count; $i++) {
-            Write-Host ("[{0}] {1}" -f ($i + 1), $Items[$i])
-        }
-        while ($true) {
-            $choice = Read-Host "Enter a number (1-$($Items.Count)) or press Enter to cancel"
-            if ([string]::IsNullOrWhiteSpace($choice)) { return $null }
-            $n = 0
-            if ([int]::TryParse($choice, [ref]$n) -and $n -ge 1 -and $n -le $Items.Count) {
-                return ($n - 1)
+        # PowerShell 5.1 sometimes needs TLS 1.2 explicitly.
+        try {
+            if ($PSVersionTable.PSVersion.Major -lt 6) {
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             }
         }
-    }
-}
-
-
-
-
-
-function New-AzDoProject {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string]$Organization,
-        [Parameter(Mandatory)][string]$ProjectName,
-        [Parameter()][string]$Visibility = 'private',
-        [Parameter()][string]$SourceControl = 'Git'
-    )
-
-    $ProjectName = $ProjectName.Trim()
-    if ([string]::IsNullOrWhiteSpace($ProjectName)) {
-        throw "Project name cannot be empty."
-    }
-
-    Write-Section "Creating new Azure DevOps project"
-    Write-Host "Project: $ProjectName" -ForegroundColor Cyan
-
-    $processes = @(Get-VSTeamProcess)
-    if ($processes.Count -eq 0) {
-        throw "Unable to list Azure DevOps processes to create a project. Verify permissions in the organization."
-    }
-
-    # Prefer Agile if present, otherwise first.
-    $defaultProcess = $processes | Where-Object { $_.name -eq 'Agile' } | Select-Object -First 1
-    if (-not $defaultProcess) {
-        $defaultProcess = $processes | Select-Object -First 1
-    }
-
-    $processNames = @($processes | Sort-Object -Property name | ForEach-Object { $_.name })
-    $selectedProcessName = $defaultProcess.name
-
-    # Let user choose the process template.
-    $procIndex = Select-FromMenu -Title "Select a process (template) for the new project" -Items $processNames
-    if ($null -ne $procIndex) {
-        $selectedProcessName = $processNames[$procIndex]
-    }
-
-    $selectedProcess = $processes | Where-Object { $_.name -eq $selectedProcessName } | Select-Object -First 1
-    if (-not $selectedProcess -or -not $selectedProcess.id) {
-        throw "Unable to resolve selected process '$selectedProcessName'."
-    }
-
-    # Use VSTeam command to create project - it handles async operation polling automatically
-    Write-Host "Creating project using process template: $selectedProcessName" -ForegroundColor Yellow
-    
-    try {
-        # Note: Add-VSTeamProject uses -ProjectName instead of -Name and doesn't have VersionControlSource
-        $addParams = @{
-            ProjectName = $ProjectName
-            ProcessTemplate = $selectedProcessName
-            Visibility = $Visibility
+        catch {
+            # Non-fatal; continue.
         }
+
+        Invoke-WebRequest -Uri $gitUrl -OutFile $gitInstaller -UseBasicParsing
         
-        # Git is default, only add TFVC switch if needed
-        if ($SourceControl -eq 'Tfvc') {
-            $addParams.TFVC = $true
+        if (-not (Test-Path $gitInstaller)) {
+            throw "Failed to download Git installer"
         }
+
+        Write-Host "Extracting portable Git to $gitDir..." -ForegroundColor Yellow
+        New-DirectoryIfMissing -Path $gitDir
         
-        $created = Add-VSTeamProject @addParams
+        # The .7z.exe is a self-extracting archive
+        $extractArgs = @('-o"' + $gitDir + '"', '-y')
+        $process = Start-Process -FilePath $gitInstaller -ArgumentList $extractArgs -Wait -NoNewWindow -PassThru
         
-        if ($created -and $created.name) {
-            Write-Host "Project '$ProjectName' created successfully." -ForegroundColor Green
-            return $created
+        if ($process.ExitCode -ne 0) {
+            throw "Git extraction failed with exit code $($process.ExitCode)"
         }
-        else {
-            throw "Project creation returned no result."
+
+        # Clean up installer
+        Remove-Item $gitInstaller -Force -ErrorAction SilentlyContinue
+
+        if (-not (Test-Path $gitExe)) {
+            throw "Git extraction completed but git.exe not found at expected location"
         }
+
+        Write-Host "Git extracted successfully to: $gitDir"
+        return $gitDir
     }
     catch {
-        Write-Host "Failed to create project '$ProjectName': $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Failed to install portable Git: $($_.Exception.Message)" -ForegroundColor Red
         throw
     }
 }
+
+Write-Section "Initialising setup"
+
+$TempModuleRoot = Join-Path ([System.IO.Path]::GetTempPath()) "ALM4Dataverse\\Modules"
+New-DirectoryIfMissing -Path $TempModuleRoot
+
+$delim = Get-ModulePathDelimiter
+if (-not ($env:PSModulePath -split [Regex]::Escape($delim) | Where-Object { $_ -eq $TempModuleRoot })) {
+    $env:PSModulePath = "$TempModuleRoot$delim$env:PSModulePath"
+}
+
+Write-Host "Using temp module root: $TempModuleRoot"
+
+$requiredModules = @{
+    'VSTeam'                           = '7.15.2'
+    'PSMenu'                           = '0.2.0'
+    'Rnwood.Dataverse.Data.PowerShell' = '2.14.0'
+}
+
+# Ensure modules are downloaded before loading so we can patch them
+foreach ($modName in $requiredModules.Keys) {
+    $version = $requiredModules[$modName]
+    if (-not (Get-ModuleAvailableExact -Name $modName -RequiredVersion $version)) {
+        Save-ModuleExact -Name $modName -RequiredVersion $version -Destination $TempModuleRoot
+    }
+}
+
+foreach ($modName in $requiredModules.Keys) {
+    $version = $requiredModules[$modName]
+    Import-RequiredModuleVersion -Name $modName -RequiredVersion $version -Destination $TempModuleRoot
+}
+
+# Download and install portable Git
+$gitInstallDir = Install-PortableGit -Destination $TempModuleRoot
+$gitBinDir = Join-Path $gitInstallDir "bin"
+
+# Add Git to PATH for this session
+if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $gitBinDir })) {
+    $env:PATH = "$gitBinDir;$env:PATH"
+}
+
+# Verify Git is now available
+$git = Get-Command git -ErrorAction SilentlyContinue
+if (-not $git) {
+    throw "Git was installed but is still not available in PATH"
+}
+
+Write-Host "Git is now available: $($git.Source)"
+Write-Host "Version: $(git --version)"
+
+#endregion
+
+#region Authentication
 
 function Get-AuthToken {
     param(
@@ -299,10 +297,11 @@ function Get-AuthToken {
                 # PowerShell Core
                 $dllPath = Join-Path $base "cmdlets\net8.0\Microsoft.Identity.Client.dll"
                 if (-not (Test-Path $dllPath)) {
-                     # Fallback or check for other net core versions if net8.0 isn't there
-                     $dllPath = Join-Path $base "cmdlets\netcoreapp3.1\Microsoft.Identity.Client.dll"
+                    # Fallback or check for other net core versions if net8.0 isn't there
+                    $dllPath = Join-Path $base "cmdlets\netcoreapp3.1\Microsoft.Identity.Client.dll"
                 }
-            } else {
+            }
+            else {
                 # PowerShell Desktop
                 $dllPath = Join-Path $base "cmdlets\net462\Microsoft.Identity.Client.dll"
             }
@@ -310,14 +309,16 @@ function Get-AuthToken {
             if ($dllPath -and (Test-Path $dllPath)) {
                 Write-Host "Loading MSAL from: $dllPath" -ForegroundColor DarkGray
                 Add-Type -Path $dllPath
-            } else {
+            }
+            else {
                 Write-Host "MSAL DLL not found at expected path: $dllPath" -ForegroundColor Red
                 # Fallback to recursive search
                 $allDlls = Get-ChildItem $base -Recurse -Filter "Microsoft.Identity.Client.dll"
                 $found = $null
                 if ($PSVersionTable.PSEdition -eq 'Core') {
                     $found = $allDlls | Where-Object { $_.FullName -match 'netcore|netstandard|net\d\.\d' } | Select-Object -First 1
-                } else {
+                }
+                else {
                     $found = $allDlls | Where-Object { $_.FullName -match 'net4' } | Select-Object -First 1
                 }
                 
@@ -337,7 +338,8 @@ function Get-AuthToken {
     $app = $null
     try {
         $app = Get-Variable -Name "MsalApp" -Scope Script -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Value
-    } catch {}
+    }
+    catch {}
 
     if (-not $app) {
         $builder = [Microsoft.Identity.Client.PublicClientApplicationBuilder]::Create($ClientId)
@@ -381,127 +383,16 @@ function Get-AuthToken {
     return $authResult
 }
 
-Write-Section "Preparing temp module path"
+Write-Section "Authenticating"
 
-$TempModuleRoot = Join-Path ([System.IO.Path]::GetTempPath()) "ALM4Dataverse\\Modules"
-New-DirectoryIfMissing -Path $TempModuleRoot
+Write-Host "To enable automated setup setup, we need to authenticate with the necessary services." -ForegroundColor Green
+Write-Host ""
+Write-Host "When prompted, please log in with an account that has access to:" -ForegroundColor Green
+Write-Host "- Your Azure DevOps organization/project (PROJECT administrator role for existing project, ORGANISATION OWNER role if you want to create a new project)" -ForegroundColor Green
+Write-Host "- Your Dataverse DEV environment (SYSTEM ADMINISTRATOR role)" -ForegroundColor Green
+Write-Host ""
+Read-Host "Press Enter to open browser for authentication..."
 
-$delim = Get-ModulePathDelimiter
-if (-not ($env:PSModulePath -split [Regex]::Escape($delim) | Where-Object { $_ -eq $TempModuleRoot })) {
-    $env:PSModulePath = "$TempModuleRoot$delim$env:PSModulePath"
-}
-
-Write-Host "Using temp module root: $TempModuleRoot" -ForegroundColor Green
-
-Write-Section "Ensuring required modules"
-
-$requiredModules = @{
-    'VSTeam' = '7.15.2'
-    'PSMenu' = '0.2.0'
-    'Rnwood.Dataverse.Data.PowerShell' = '2.14.0'
-}
-
-# Ensure modules are downloaded before loading so we can patch them
-foreach ($modName in $requiredModules.Keys) {
-    $version = $requiredModules[$modName]
-    if (-not (Get-ModuleAvailableExact -Name $modName -RequiredVersion $version)) {
-        Save-ModuleExact -Name $modName -RequiredVersion $version -Destination $TempModuleRoot
-    }
-}
-
-foreach ($modName in $requiredModules.Keys) {
-    $version = $requiredModules[$modName]
-    Import-RequiredModuleVersion -Name $modName -RequiredVersion $version -Destination $TempModuleRoot
-}
-
-
-
-
-Write-Section "Ensuring Git is available"
-
-function Install-PortableGit {
-    param(
-        [Parameter(Mandatory)][string]$Destination
-    )
-
-    $gitDir = Join-Path $Destination "Git"
-    $gitExe = Join-Path $gitDir "bin\git.exe"
-    
-    if (Test-Path $gitExe) {
-        Write-Host "Git already available at: $gitExe" -ForegroundColor Green
-        return $gitDir
-    }
-
-    Write-Host "Downloading portable Git..." -ForegroundColor Yellow
-    $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.52.0.windows.1/PortableGit-2.52.0-64-bit.7z.exe"
-    $gitInstaller = Join-Path $Destination "PortableGit.exe"
-    
-    try {
-        # PowerShell 5.1 sometimes needs TLS 1.2 explicitly.
-        try {
-            if ($PSVersionTable.PSVersion.Major -lt 6) {
-                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            }
-        }
-        catch {
-            # Non-fatal; continue.
-        }
-
-        Invoke-WebRequest -Uri $gitUrl -OutFile $gitInstaller -UseBasicParsing
-        
-        if (-not (Test-Path $gitInstaller)) {
-            throw "Failed to download Git installer"
-        }
-
-        Write-Host "Extracting portable Git to $gitDir..." -ForegroundColor Yellow
-        New-DirectoryIfMissing -Path $gitDir
-        
-        # The .7z.exe is a self-extracting archive
-        $extractArgs = @('-o"' + $gitDir + '"', '-y')
-        $process = Start-Process -FilePath $gitInstaller -ArgumentList $extractArgs -Wait -NoNewWindow -PassThru
-        
-        if ($process.ExitCode -ne 0) {
-            throw "Git extraction failed with exit code $($process.ExitCode)"
-        }
-
-        # Clean up installer
-        Remove-Item $gitInstaller -Force -ErrorAction SilentlyContinue
-
-        if (-not (Test-Path $gitExe)) {
-            throw "Git extraction completed but git.exe not found at expected location"
-        }
-
-        Write-Host "Git extracted successfully to: $gitDir" -ForegroundColor Green
-        return $gitDir
-    }
-    catch {
-        Write-Host "Failed to install portable Git: $($_.Exception.Message)" -ForegroundColor Red
-        throw
-    }
-}
-
-# Download and install portable Git
-$gitInstallDir = Install-PortableGit -Destination $TempModuleRoot
-$gitBinDir = Join-Path $gitInstallDir "bin"
-
-# Add Git to PATH for this session
-if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $gitBinDir })) {
-    $env:PATH = "$gitBinDir;$env:PATH"
-}
-
-# Verify Git is now available
-$git = Get-Command git -ErrorAction SilentlyContinue
-if (-not $git) {
-    throw "Git was installed but is still not available in PATH"
-}
-
-Write-Host "Git is now available: $($git.Source)" -ForegroundColor Green
-Write-Host "Version: $(git --version)" -ForegroundColor Green
-
-
-Write-Section "Authenticating to Azure"
-
-Write-Host "Using Azure (AAD) authentication to acquire an Azure DevOps bearer token." -ForegroundColor Green
 
 # Azure DevOps resource for AAD token acquisition.
 $adoResourceUrl = '499b84ac-1321-427f-aa17-267ca6975798'
@@ -514,182 +405,99 @@ if (-not $adoAuthResult -or -not $adoAuthResult.AccessToken) {
 $adoAccessToken = [pscustomobject]@{ Token = $adoAuthResult.AccessToken }
 $secureToken = ConvertTo-SecureString -String $adoAccessToken.Token -AsPlainText -Force
 
-Write-Section "Configuring VSTeam"
+#endregion
 
-if (-not $Organization) {
-    Write-Section "Discovering Azure DevOps organizations"
+#region Azure DevOps Setup
 
-    Set-VSTeamAccount -Account rnwsol -SecurePersonalAccessToken $secureToken -UseBearerToken -Force
+function ConvertTo-AzDoOrganizationName {
+    param([Parameter(Mandatory)][string]$InputText)
 
-    # Use VSTeam commands to get organizations
+    $text = $InputText.Trim()
+
+    # Accept:
+    # - myorg
+    # - https://dev.azure.com/myorg
+    # - https://dev.azure.com/myorg/
+    # - dev.azure.com/myorg
+    if ($text -match 'dev\.azure\.com/([^/]+)') {
+        return $Matches[1]
+    }
+
+    # Also accept legacy Visual Studio URLs like https://myorg.visualstudio.com
+    if ($text -match '^https?://([^\.]+)\.visualstudio\.com/?$') {
+        return $Matches[1]
+    }
+
+    return $text
+}
+
+function New-AzDoProject {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Organization,
+        [Parameter(Mandatory)][string]$ProjectName,
+        [Parameter()][string]$Visibility = 'private'
+    )
+
+    $ProjectName = $ProjectName.Trim()
+    if ([string]::IsNullOrWhiteSpace($ProjectName)) {
+        throw "Project name cannot be empty."
+    }
+
+    Write-Section "Creating new Azure DevOps project"
+    Write-Host "Project: $ProjectName" -ForegroundColor Cyan
+
+    $processes = @(Get-VSTeamProcess)
+    if ($processes.Count -eq 0) {
+        throw "Unable to list Azure DevOps processes to create a project. Verify permissions in the organization."
+    }
+
+    # Prefer Agile if present, otherwise first.
+    $defaultProcess = $processes | Where-Object { $_.name -eq 'Agile' } | Select-Object -First 1
+    if (-not $defaultProcess) {
+        $defaultProcess = $processes | Select-Object -First 1
+    }
+
+    $processNames = @($processes | Sort-Object -Property name | ForEach-Object { $_.name })
+    $selectedProcessName = $defaultProcess.name
+
+    # Let user choose the process template.
+    $procIndex = Select-FromMenu -Title "Select a process (template) for the new project" -Items $processNames
+    if ($null -ne $procIndex) {
+        $selectedProcessName = $processNames[$procIndex]
+    }
+
+    $selectedProcess = $processes | Where-Object { $_.name -eq $selectedProcessName } | Select-Object -First 1
+    if (-not $selectedProcess -or -not $selectedProcess.id) {
+        throw "Unable to resolve selected process '$selectedProcessName'."
+    }
+
+    # Use VSTeam command to create project - it handles async operation polling automatically
+    Write-Host "Creating project using process template: $selectedProcessName" -ForegroundColor Yellow
+    
     try {
-        # Get current user profile to obtain member ID
-        $meProfile = Get-VSTeamUserProfile -MyProfile
-        $memberId = $meProfile.publicAlias
-        if (-not $memberId) {
-            $memberId = $meProfile.id
+        # Note: Add-VSTeamProject uses -ProjectName instead of -Name and doesn't have VersionControlSource
+        $addParams = @{
+            ProjectName     = $ProjectName
+            ProcessTemplate = $selectedProcessName
+            Visibility      = $Visibility
         }
-        if (-not $memberId) {
-            throw "Unable to determine memberId from profile response."
-        }
-
-        write-host "Fetching organizations for memberId: $memberId" -ForegroundColor DarkGray
-        $orgs = @(Get-VSTeamAccounts -MemberId $memberId)
         
-        if ($orgs.Count -eq 0) {
-            throw "No Azure DevOps organizations were returned for this user."
+        
+        $created = Add-VSTeamProject @addParams
+        
+        if ($created -and $created.name) {
+            Write-Host "Project '$ProjectName' created successfully."
+            return $created
         }
-
-        $orgs | convertto-json -depth 100 | Write-Host -ForegroundColor DarkGray
-
-        $orgsSorted = $orgs | Sort-Object -Property accountName
-        $orgNames = @($orgsSorted | ForEach-Object { $_.accountName })
+        else {
+            throw "Project creation returned no result."
+        }
     }
     catch {
-        Write-Host "Failed to discover organizations: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Failed to create project '$ProjectName': $($_.Exception.Message)" -ForegroundColor Red
         throw
     }
-
-    $orgIndex = 0
-    if ($orgNames.Count -gt 1) {
-        $orgIndex = Select-FromMenu -Title "Select an Azure DevOps organization" -Items $orgNames
-        if ($null -eq $orgIndex) {
-            Write-Host "No organization selected." -ForegroundColor Yellow
-            return
-        }
-    }
-
-    $orgName = $orgNames[$orgIndex]
-    $orgUri = $orgsSorted[$orgIndex].accountUri
-    Write-Host "Selected organization: $orgName" -ForegroundColor Green
-    if ($orgUri) {
-        Write-Host "Organization URI: $orgUri" -ForegroundColor DarkGray
-    }
-}
-else {
-    # Allow manual override (e.g., for automation or troubleshooting)
-    $orgName = ConvertTo-AzDoOrganizationName -InputText $Organization
-}
-
-# VSTeam expects -Account to be the org name (not the full URL).
-Set-VSTeamAccount -Account $orgName -SecurePersonalAccessToken $secureToken -UseBearerToken -Force
-Write-Host "VSTeam configured for organization '$orgName' using a bearer token." -ForegroundColor Green
-
-Write-Section "Ensuring Power Platform Build Tools extension"
-
-$requiredExtension = "microsoft-IsvExpTools.PowerPlatform-BuildTools"
-try {
-    # Check if the extension is already installed
-    $installedExtensions = Get-VSTeamExtension
-    $ppBuildTools = $installedExtensions | Where-Object { $_.publisherId -eq "microsoft-IsvExpTools" -and $_.extensionId -eq "PowerPlatform-BuildTools" }
-    
-    if ($ppBuildTools) {
-        Write-Host "Power Platform Build Tools extension is already installed (Version: $($ppBuildTools.version))." -ForegroundColor Green
-    } else {
-        Write-Host "Power Platform Build Tools extension not found. Installing..." -ForegroundColor Yellow
-        
-        # Install the extension
-        Install-VSTeamExtension -PublisherId "microsoft-IsvExpTools" -ExtensionId "PowerPlatform-BuildTools"
-        
-        # Verify installation
-        $installedExtensions = Get-VSTeamExtension
-        $ppBuildTools = $installedExtensions | Where-Object { $_.publisherId -eq "microsoft-IsvExpTools" -and $_.extensionId -eq "PowerPlatform-BuildTools" }
-        
-        if ($ppBuildTools) {
-            Write-Host "Power Platform Build Tools extension installed successfully (Version: $($ppBuildTools.version))." -ForegroundColor Green
-        } else {
-            throw "Failed to verify Power Platform Build Tools extension installation after install command completed."
-        }
-    }
-}
-catch {
-    Write-Host "Error managing Power Platform Build Tools extension: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "This may be due to insufficient permissions to manage extensions in the organization." -ForegroundColor Yellow
-    Write-Host "Please ensure you have administrative rights or install the extension manually from the Azure DevOps marketplace." -ForegroundColor Yellow
-    throw
-}
-
-Write-Section "Preparing Git authentication"
-
-# We'll use the Azure DevOps access token that was already obtained via Get-AzAccessToken
-
-$azDevOpsAccessToken = $adoAccessToken.Token
-
-Write-Host "Using existing Azure DevOps access token for Git operations" -ForegroundColor Green
-
-Write-Section "Fetching projects"
-
-$projects = Get-VSTeamProject
-$projectNames = @()
-if ($projects) {
-    $projectNames = @($projects | ForEach-Object { $_.Name })
-}
-
-$menuItems = $projectNames + @('Create a new project')
-$index = Select-FromMenu -Title "Select an Azure DevOps project" -Items $menuItems
-
-if ($null -eq $index) {
-    Write-Host "No project selected." -ForegroundColor Yellow
-    return
-}
-
-if ($index -eq ($menuItems.Count - 1)) {
-    # Create new project
-
-    $name = Read-Host 'Enter the name for the new Azure DevOps project'    
-
-    $created = New-AzDoProject -Organization $orgName -ProjectName $name -Visibility private -SourceControl git
-
-    # Refresh VSTeam project list
-    $projects = Get-VSTeamProject
-    $selectedProject = $null
-
-    if ($projects) {
-        $selectedProject = $projects | Where-Object { $_.Name -eq $name } | Select-Object -First 1
-    }
-    if (-not $selectedProject -and $created -and $created.name) {
-        # As a fallback, adapt REST project shape.
-        $selectedProject = [pscustomobject]@{ Name = $created.name; Id = $created.id }
-    }
-    if (-not $selectedProject) {
-        throw "Project creation completed, but the project could not be resolved for selection."
-    }
-
-    Write-Host "Created and selected project: $($selectedProject.Name)" -ForegroundColor Green
-}
-else {
-    $selectedProject = $projects[$index]
-    Write-Host "Selected project: $($selectedProject.Name)" -ForegroundColor Green
-}
-
-# Optional: set default project for subsequent VSTeam calls in this session.
-if (Get-Command -Name Set-VSTeamDefaultProject -ErrorAction SilentlyContinue) {
-    Set-VSTeamDefaultProject -Project $selectedProject.Name | Out-Null
-    Write-Host "Default VSTeam project set to '$($selectedProject.Name)'." -ForegroundColor Green
-}
-
-Write-Section "Ensuring Shared Git repository"
-
-$sharedRepoName = "ALM4Dataverse"
-$existingRepos = Get-VSTeamGitRepository -ProjectName $selectedProject.Name
-$repo = $existingRepos | Where-Object { $_.Name -eq $sharedRepoName } | Select-Object -First 1
-
-if (-not $repo) {
-    Write-Host "Creating Git repository '$sharedRepoName' in project '$($selectedProject.Name)'..." -ForegroundColor Yellow
-    $repo = Add-VSTeamGitRepository -ProjectName $selectedProject.Name -Name $sharedRepoName
-    if ($repo) {
-        Write-Host "Git repository '$sharedRepoName' created successfully." -ForegroundColor Green
-    }
-    else {
-        Write-Host "Failed to create Git repository '$sharedRepoName'." -ForegroundColor Red
-    }
-}
-else {
-    Write-Host "Git repository '$sharedRepoName' already exists." -ForegroundColor Green
-}
-
-if (-not $repo -or -not $repo.Id) {
-    throw "Shared repository '$sharedRepoName' could not be created or resolved."
 }
 
 function Test-AzDoGitRepositoryHasCommits {
@@ -789,52 +597,206 @@ function Wait-AzDoGitRepositoryImport {
     throw "Timed out waiting for repository import to complete after $TimeoutSeconds seconds."
 }
 
-function ConvertFrom-GitRefToBranchName {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string]$Ref
-    )
+Write-Section "Select Azure DevOps organization"
 
-    if ($Ref -match '^refs/heads/(.+)$') {
-        return $Matches[1]
+# Use direct REST API to get organizations (VSTeam requires an org to connect to first)
+try {
+    $headers = @{
+        Authorization = "Bearer $($adoAccessToken.Token)"
     }
-    return $Ref
+
+    # Get current user profile to obtain member ID
+    $profileUrl = "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=6.0"
+    $profileResponse = Invoke-RestMethod -Uri $profileUrl -Method Get -Headers $headers
+    
+    $memberId = $profileResponse.publicAlias
+    if (-not $memberId) {
+        $memberId = $profileResponse.id
+    }
+    if (-not $memberId) {
+        throw "Unable to determine memberId from profile response."
+    }
+
+    Write-Host "Fetching organizations for memberId: $memberId" -ForegroundColor DarkGray
+    
+    $accountsUrl = "https://app.vssps.visualstudio.com/_apis/accounts?memberId=$memberId&api-version=6.0"
+    $accountsResponse = Invoke-RestMethod -Uri $accountsUrl -Method Get -Headers $headers
+    
+    $orgs = @($accountsResponse.value)
+    
+    if ($orgs.Count -eq 0) {
+        throw "No Azure DevOps organizations were returned for this user."
+    }
+
+    $orgs | ConvertTo-Json -Depth 100 | Write-Host -ForegroundColor DarkGray
+
+    $orgsSorted = $orgs | Sort-Object -Property accountName
+    $orgNames = @($orgsSorted | ForEach-Object { $_.accountName })
+}
+catch {
+    Write-Host "Failed to discover organizations: $($_.Exception.Message)" -ForegroundColor Red
+    throw
 }
 
-function Read-YesNo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string]$Prompt,
-        [Parameter()][switch]$DefaultNo
-    )
-
-    $suffix = if ($DefaultNo) { ' [y/N]' } else { ' [Y/n]' }
-    $answer = Read-Host ($Prompt + $suffix)
-    if ([string]::IsNullOrWhiteSpace($answer)) {
-        return (-not $DefaultNo)
+$orgIndex = 0
+if ($orgNames.Count -gt 1) {
+    $orgIndex = Select-FromMenu -Title "Select an Azure DevOps organization" -Items $orgNames
+    if ($null -eq $orgIndex) {
+        Write-Host "No organization selected." -ForegroundColor Yellow
+        return
     }
-    return ($answer.Trim().ToLowerInvariant() -in @('y', 'yes'))
+}
+
+$orgName = $orgNames[$orgIndex]
+$orgUri = $orgsSorted[$orgIndex].accountUri
+Write-Host "Selected organization: $orgName"
+if ($orgUri) {
+    Write-Host "Organization URI: $orgUri" -ForegroundColor DarkGray
+}
+
+# VSTeam expects -Account to be the org name (not the full URL).
+Set-VSTeamAccount -Account $orgName -SecurePersonalAccessToken $secureToken -UseBearerToken -Force
+Write-Host "VSTeam configured for organization '$orgName' using a bearer token."
+
+Write-Section "Ensuring Needed Extensions are Enabled"
+
+$requiredExtension = "microsoft-IsvExpTools.PowerPlatform-BuildTools"
+try {
+    # Check if the extension is already installed
+    $installedExtensions = Get-VSTeamExtension
+    $ppBuildTools = $installedExtensions | Where-Object { $_.publisherId -eq "microsoft-IsvExpTools" -and $_.extensionId -eq "PowerPlatform-BuildTools" }
+    
+    if ($ppBuildTools) {
+        Write-Host "Power Platform Build Tools extension is already installed (Version: $($ppBuildTools.version))."
+    }
+    else {
+        if (-not (Read-YesNo -Prompt "Power Platform Build Tools extension not found. Install it?")) {
+            throw "Power Platform Build Tools extension is required. Setup cannot continue without it."
+        }
+        Write-Host "Power Platform Build Tools extension not found. Installing..." -ForegroundColor Yellow
+        
+        # Install the extension
+        Install-VSTeamExtension -PublisherId "microsoft-IsvExpTools" -ExtensionId "PowerPlatform-BuildTools"
+        
+        # Verify installation
+        $installedExtensions = Get-VSTeamExtension
+        $ppBuildTools = $installedExtensions | Where-Object { $_.publisherId -eq "microsoft-IsvExpTools" -and $_.extensionId -eq "PowerPlatform-BuildTools" }
+        
+        if ($ppBuildTools) {
+            Write-Host "Power Platform Build Tools extension installed successfully (Version: $($ppBuildTools.version))."
+        }
+        else {
+            throw "Failed to verify Power Platform Build Tools extension installation after install command completed."
+        }
+    }
+}
+catch {
+    Write-Host "Error installing Power Platform Build Tools extension: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "This may be due to insufficient permissions to manage extensions in the organization." -ForegroundColor Yellow
+    Write-Host "Please ensure you have AzDO organization administrative rights or ask your admin to install the extension manually from the Azure DevOps marketplace:" -ForegroundColor Yellow
+    Write-Host "https://marketplace.visualstudio.com/acquisition?itemName=microsoft-IsvExpTools.PowerPlatform-BuildTools"
+    throw
+}
+
+Write-Section "Select target Azure DevOps Project"
+
+# We'll use the Azure DevOps access token that was already obtained via Get-AzAccessToken
+
+$azDevOpsAccessToken = $adoAccessToken.Token
+
+$projects = Get-VSTeamProject
+$projectNames = @()
+if ($projects) {
+    $projectNames = @($projects | ForEach-Object { $_.Name })
+}
+
+$menuItems = $projectNames + @('Create a new project')
+$index = Select-FromMenu -Title "Select the target Azure DevOps project" -Items $menuItems
+
+if ($null -eq $index) {
+    Write-Host "No project selected." -ForegroundColor Yellow
+    return
+}
+
+if ($index -eq ($menuItems.Count - 1)) {
+    # Create new project
+
+    $name = Read-Host 'Enter the name for the new Azure DevOps project'    
+
+    $created = New-AzDoProject -Organization $orgName -ProjectName $name -Visibility private -SourceControl git
+
+    # Refresh VSTeam project list
+    $projects = Get-VSTeamProject
+    $selectedProject = $null
+
+    if ($projects) {
+        $selectedProject = $projects | Where-Object { $_.Name -eq $name } | Select-Object -First 1
+    }
+    if (-not $selectedProject -and $created -and $created.name) {
+        # As a fallback, adapt REST project shape.
+        $selectedProject = [pscustomobject]@{ Name = $created.name; Id = $created.id }
+    }
+    if (-not $selectedProject) {
+        throw "Project creation completed, but the project could not be resolved for selection."
+    }
+
+    Write-Host "Created and selected project: $($selectedProject.Name)"
+}
+else {
+    $selectedProject = $projects[$index]
+    Write-Host "Selected project: $($selectedProject.Name)"
+}
+
+# Optional: set default project for subsequent VSTeam calls in this session.
+if (Get-Command -Name Set-VSTeamDefaultProject -ErrorAction SilentlyContinue) {
+    Set-VSTeamDefaultProject -Project $selectedProject.Name | Out-Null
+    Write-Host "Default VSTeam project set to '$($selectedProject.Name)'."
+}
+
+Write-Section "Ensuring Shared Git repository"
+
+$sharedRepoName = "ALM4Dataverse"
+$existingRepos = Get-VSTeamGitRepository -ProjectName $selectedProject.Name
+$repo = $existingRepos | Where-Object { $_.Name -eq $sharedRepoName } | Select-Object -First 1
+
+if (-not $repo) {
+    Write-Host "Creating Git repository '$sharedRepoName' in project '$($selectedProject.Name)'..." -ForegroundColor Yellow
+    $repo = Add-VSTeamGitRepository -ProjectName $selectedProject.Name -Name $sharedRepoName
+    if ($repo) {
+        Write-Host "Git repository '$sharedRepoName' created successfully."
+    }
+    else {
+        Write-Host "Failed to create Git repository '$sharedRepoName'." -ForegroundColor Red
+    }
+}
+else {
+    Write-Host "Git repository '$sharedRepoName' already exists."
+}
+
+if (-not $repo -or -not $repo.Id) {
+    throw "Shared repository '$sharedRepoName' could not be created or resolved."
 }
 
 # Ensure the script is running interactively
 try {
     [void]$Host.UI.RawUI
-} catch {
+}
+catch {
     throw "This script must be run in an interactive PowerShell session."
 }
 
-Write-Section "Checking shared repository history"
+Write-Section "Creating/updating shared repository '$sharedRepoName'"
 
 $hasCommits = Test-AzDoGitRepositoryHasCommits -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id
 if (-not $hasCommits) {
-    Write-Host "Repository '$sharedRepoName' has no commits. Seeding it from the example repo..." -ForegroundColor Yellow
+    Write-Host "Repository '$sharedRepoName' has no commits. Seeding it from the upstream repo..." -ForegroundColor Yellow
 
-    $seedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
+    $sharedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
     try {
-        $import = Start-AzDoGitRepositoryImport -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id -SourceGitUrl $seedSourceUrl
+        $import = Start-AzDoGitRepositoryImport -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id -SourceGitUrl $sharedSourceUrl
         [void](Wait-AzDoGitRepositoryImport -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id -ImportResponse $import -TimeoutSeconds 600)
 
-        Write-Host "Seed import completed." -ForegroundColor Green
+        Write-Host "shared import completed."
     }
     catch {
         Write-Host "Repository import attempt failed." -ForegroundColor Red
@@ -842,76 +804,111 @@ if (-not $hasCommits) {
         throw
     }
 }
-else {
-    # Offer an interactive, automated rebase.
-    # This uses PowerGit module instead of git.exe
-    if (Read-YesNo -Prompt "Rebase '$sharedRepoName' onto the example repo now? This may rewrite history." -DefaultNo) {
-        $seedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
-        $destUrl = $repo.remoteUrl
-        if (-not $destUrl) {
-            throw "Could not determine remoteUrl for repository '$sharedRepoName'."
+
+# Check if we can fast-forward from the shared repo
+$sharedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
+$destUrl = $repo.remoteUrl
+if (-not $destUrl) {
+    throw "Could not determine remoteUrl for repository '$sharedRepoName'."
+}
+
+$branch = 'main'
+if ($repo.defaultBranch) {
+    $branch = ConvertFrom-GitRefToBranchName -Ref $repo.defaultBranch
+}
+
+# Create a temp folder for checking history
+$workRoot = Join-Path $env:TEMP ("ALM4Dataverse-Check-" + [guid]::NewGuid().ToString('n'))
+New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
+
+try {
+    Write-Host "Checking shared repository status against shared repo..." -ForegroundColor DarkGray
+    
+    # Clone the current shared repo
+    & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" clone $destUrl $workRoot | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git clone failed with exit code $LASTEXITCODE"
+    }
+
+    Push-Location $workRoot
+    
+    # Add upstream remote
+    & git remote add upstream $sharedSourceUrl | Out-Null
+    & git fetch upstream --tags | Out-Null
+    
+    # Check relationship between HEAD and upstream ref
+    $targetRef = "upstream/$ALM4DataverseRef"
+    & git rev-parse --verify --quiet $targetRef | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        $targetRef = $ALM4DataverseRef
+        & git rev-parse --verify --quiet $targetRef | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not resolve reference '$ALM4DataverseRef' from upstream repository."
         }
-
-        $branch = 'main'
-        if ($repo.defaultBranch) {
-            $branch = ConvertFrom-GitRefToBranchName -Ref $repo.defaultBranch
-        }
-
-        $workRoot = Join-Path $env:TEMP ("ALM4Dataverse-Rebase-" + [guid]::NewGuid().ToString('n'))
-        New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
-
-        Write-Host "Cloning '$sharedRepoName' to a temp folder..." -ForegroundColor Yellow
-        try {
-            & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" clone $destUrl $workRoot
-            if ($LASTEXITCODE -ne 0) {
-                throw "Git clone exited with code $LASTEXITCODE"
-            }
-        } catch {
-            throw "Git clone failed for '$destUrl': $($_.Exception.Message)"
-        }
-
-        Push-Location $workRoot
-        try {
-            & git remote add upstream $seedSourceUrl
-            if ($LASTEXITCODE -ne 0) {
-                throw "Git remote add failed with exit code $LASTEXITCODE"
-            }
+    }
+    $upstreamRef = $targetRef
+    
+    # Check if they are exactly the same
+    $localHash = (& git rev-parse HEAD).Trim()
+    $upstreamHash = (& git rev-parse $upstreamRef).Trim()
+        
+    if ($localHash -eq $upstreamHash) {
+        Write-Host "Shared repository is already up to date."
+    }
+    else {
+        # Check if fast-forward is possible (HEAD is ancestor of upstream)
+        & git merge-base --is-ancestor HEAD $upstreamRef
+        $canFastForward = ($LASTEXITCODE -eq 0)
             
-            & git fetch upstream
-            if ($LASTEXITCODE -ne 0) {
-                throw "Git fetch upstream failed with exit code $LASTEXITCODE"
+        if ($canFastForward) {
+            if (Read-YesNo -Prompt "Updates are available from the shared repo (fast-forward). Update '$sharedRepoName'?" ) {
+                Write-Host "Fast-forwarding..." -ForegroundColor Yellow
+                & git merge --ff-only $upstreamRef
+                if ($LASTEXITCODE -ne 0) { throw "Git merge failed" }
+                    
+                & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push origin $branch
+                if ($LASTEXITCODE -ne 0) { throw "Git push failed" }
+                    
+                Write-Host "Repository updated successfully."
             }
-            
-            & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" fetch origin
-            if ($LASTEXITCODE -ne 0) {
-                throw "Git fetch origin failed with exit code $LASTEXITCODE"
-            }
-
-            Write-Host "Rebasing branch '$branch' onto upstream/$branch..." -ForegroundColor Yellow
-            & git checkout $branch
-            if ($LASTEXITCODE -ne 0) {
-                throw "Git checkout failed with exit code $LASTEXITCODE"
-            }
-            
-            & git rebase "upstream/$branch"
-            if ($LASTEXITCODE -ne 0) {
-                throw "Git rebase failed."
-            }
-
-            Write-Host "Pushing rebased branch back to origin (force-with-lease)..." -ForegroundColor Yellow
-            & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push --force-with-lease origin $branch
-            if ($LASTEXITCODE -ne 0) {
-                throw "Git push failed with exit code $LASTEXITCODE. Ensure you have permission to push and that no one pushed new commits since the fetch."
-            }
-
-            Write-Host "Rebase completed successfully." -ForegroundColor Green
         }
-        finally {
-            Pop-Location
-            try { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+        else {
+            # Check if local is ahead (upstream is ancestor of HEAD)
+            & git merge-base --is-ancestor $upstreamRef HEAD
+            $isAhead = ($LASTEXITCODE -eq 0)
+                
+            if ($isAhead) {
+                Write-Host "Shared repository is ahead of the shared repo."
+            }
+            else {
+                # Diverged
+                if (Read-YesNo -Prompt "The shared repo '$sharedRepoName' has diverged from the shared repo with local changes. Attempt rebase to update?") {
+                    Write-Host "Rebasing..." -ForegroundColor Yellow
+                    & git rebase $upstreamRef
+                    if ($LASTEXITCODE -ne 0) { throw "Git rebase failed - this script can't handle conflicts. You need to rebase your local changes manually." }
+                        
+                    Write-Host "Pushing rebased branch (force-with-lease)..." -ForegroundColor Yellow
+                    & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push --force-with-lease origin $branch
+                    if ($LASTEXITCODE -ne 0) { throw "Git push failed" }
+                        
+                    Write-Host "Repository updated successfully."
+                }
+            }
         }
     }
 }
+catch {
+    Write-Host "Failed to check or update repository: $($_.Exception.Message)" -ForegroundColor Red
+    throw
+}
+finally {
+    if ((Get-Location).Path -eq $workRoot) { Pop-Location }
+    try { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+}
+
+#endregion
+
+#region Pipeline Setup
 
 function Select-AzDoMainRepository {
     [CmdletBinding()]
@@ -930,8 +927,9 @@ function Select-AzDoMainRepository {
     $repoNames = @($repoNames | Where-Object { $_ -ne $SharedRepositoryName })
     $menu = @($repoNames + @('Create a new repository'))
 
+    Write-Host "Select the repository where you want to set up pipelines:" -ForegroundColor Green
 
-    $selectedIndex = Select-FromMenu -Title "Select the MAIN repo to receive pipelines" -Items $menu
+    $selectedIndex = Select-FromMenu -Title "Select the repo" -Items $menu
     if ($null -eq $selectedIndex) {
         throw "No main repository selected."
     }
@@ -948,7 +946,7 @@ function Select-AzDoMainRepository {
         if (-not $created -or -not $created.Id) {
             throw "Failed to create Git repository '$newRepoName'."
         }
-        Write-Host "Created repository '$newRepoName'." -ForegroundColor Green
+        Write-Host "Created repository '$newRepoName'."
         return $created
     }
 
@@ -958,7 +956,7 @@ function Select-AzDoMainRepository {
         throw "Failed to resolve selected repository '$selectedName'."
     }
 
-    Write-Host "Selected main repository: $($selected.Name)" -ForegroundColor Green
+    Write-Host "Selected main repository: $($selected.Name)"
     return $selected
 }
 
@@ -987,7 +985,8 @@ function Sync-CopyToYourRepoIntoGitRepo {
         if ($LASTEXITCODE -ne 0) {
             throw "Git clone exited with code $LASTEXITCODE"
         }
-    } catch {
+    }
+    catch {
         throw "Git clone failed for '$($TargetRepo.remoteUrl)': $($_.Exception.Message)"
     }
 
@@ -1008,7 +1007,8 @@ function Sync-CopyToYourRepoIntoGitRepo {
         try {
             & git rev-parse HEAD 2>$null
             $hasCommits = ($LASTEXITCODE -eq 0)
-        } catch {
+        }
+        catch {
             $hasCommits = $false
         }
 
@@ -1026,7 +1026,8 @@ function Sync-CopyToYourRepoIntoGitRepo {
                 if ($LASTEXITCODE -ne 0) {
                     throw "Git checkout failed with exit code $LASTEXITCODE"
                 }
-            } else {
+            }
+            else {
                 # Branch doesn't exist locally, create it
                 & git checkout -b $branch
                 if ($LASTEXITCODE -ne 0) {
@@ -1083,10 +1084,10 @@ function Sync-CopyToYourRepoIntoGitRepo {
             if ($LASTEXITCODE -ne 0) {
                 throw "Git push failed with exit code $LASTEXITCODE. Ensure you have permission and that authentication succeeds."
             }
-            Write-Host "Main repo updated successfully." -ForegroundColor Green
+            Write-Host "Main repo updated successfully."
         }
         else {
-            Write-Host "No changes to commit; main repo already contains the required files." -ForegroundColor Green
+            Write-Host "No changes to commit; main repo already contains the required files."
         }
     }
     finally {
@@ -1212,7 +1213,7 @@ function Get-AzDoBuildServiceIdentity {
         throw "Build Service identity found but correct descriptor could not be constructed."
     }
 
-    Write-Host "Found Build Service identity: $($buildIdentity.displayName)" -ForegroundColor Green
+    Write-Host "Found Build Service identity: $($buildIdentity.displayName)"
     return $correctDescriptor
 }
 
@@ -1311,7 +1312,7 @@ function Ensure-AzDoBuildServiceHasContributeOnRepo {
     $isDenied = (($existingDeny -band $contributeBit) -ne 0)
 
     if ($alreadyAllowed -and -not $isDenied) {
-        Write-Host "Build Service already has 'Contribute' on repo." -ForegroundColor Green
+        Write-Host "Build Service already has 'Contribute' on repo."
         return
     }
 
@@ -1320,7 +1321,7 @@ function Ensure-AzDoBuildServiceHasContributeOnRepo {
 
     Write-Host "Granting Build Service 'Contribute' on repo..." -ForegroundColor Yellow
     Set-AzDoAccessControlEntry -Organization $Organization -NamespaceId $ns.Id -Token $token -Descriptor $descriptor -Allow $desiredAllow -Deny $desiredDeny | out-null
-    Write-Host "Granted 'Contribute' to Build Service on repository." -ForegroundColor Green
+    Write-Host "Granted 'Contribute' to Build Service on repository."
 }
 
 function Ensure-AzDoYamlPipelineDefinition {
@@ -1368,7 +1369,7 @@ function Ensure-AzDoYamlPipelineDefinition {
 
         $resource = "build/definitions"
         [void](Invoke-VSTeamRequest -Method POST -Resource $resource -Body ($body | ConvertTo-Json -Depth 10) -ContentType 'application/json' -Version '7.1')
-        Write-Host "Created pipeline '$DefinitionName'." -ForegroundColor Green
+        Write-Host "Created pipeline '$DefinitionName'."
         return
     }
 
@@ -1392,7 +1393,7 @@ function Ensure-AzDoYamlPipelineDefinition {
     }
 
     if (-not $needsUpdate) {
-        Write-Host "Pipeline '$DefinitionName' already exists and points at '$YamlPath'." -ForegroundColor Green
+        Write-Host "Pipeline '$DefinitionName' already exists and points at '$YamlPath'."
         return
     }
 
@@ -1408,7 +1409,7 @@ function Ensure-AzDoYamlPipelineDefinition {
     # Use Invoke-VSTeamRequest since VSTeam update commands require JSON files
     $resource = "build/definitions/$($def.id)"
     [void](Invoke-VSTeamRequest -Method PUT -Resource $resource -Body ($def | ConvertTo-Json -Depth 50) -ContentType 'application/json' -Version '7.1')
-    Write-Host "Updated pipeline '$DefinitionName'." -ForegroundColor Green
+    Write-Host "Updated pipeline '$DefinitionName'."
 }
 
 function Ensure-AzDoPipelinesForMainRepo {
@@ -1446,7 +1447,7 @@ function Ensure-AzDoVariableGroupExists {
     try {
         $existing = Get-VSTeamVariableGroup -ProjectName $Project -Name $GroupName -ErrorAction SilentlyContinue
         if ($existing) {
-            Write-Host "Variable group '$GroupName' already exists (id: $($existing.id))." -ForegroundColor Green
+            Write-Host "Variable group '$GroupName' already exists (id: $($existing.id))."
             return $existing
         }
     }
@@ -1466,10 +1467,10 @@ function Ensure-AzDoVariableGroupExists {
     $created = Add-VSTeamVariableGroup -ProjectName $Project -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description 'ALM4Dataverse environment variable group (created by setup.ps1)'
 
     if ($created -and $created.id) {
-        Write-Host "Created variable group '$GroupName' (id: $($created.id))." -ForegroundColor Green
+        Write-Host "Created variable group '$GroupName' (id: $($created.id))."
     }
     else {
-        Write-Host "Created variable group '$GroupName'." -ForegroundColor Green
+        Write-Host "Created variable group '$GroupName'."
     }
 
     return $created
@@ -1482,11 +1483,11 @@ Write-Section "Ensuring environment variable group"
 # Create the environment variable group only if it doesn't exist.
 # This seeds example values that you can later replace with your real connection reference ids / environment variable values.
 [void](Ensure-AzDoVariableGroupExists `
-    -Organization $orgName `
-    -Project $selectedProject.Name `
-    -ProjectId $selectedProject.Id `
-    -GroupName 'Environment-Dev-main' `
-    -Variables @{
+        -Organization $orgName `
+        -Project $selectedProject.Name `
+        -ProjectId $selectedProject.Id `
+        -GroupName 'Environment-Dev-main' `
+        -Variables @{
         'CONNREF_example_uniquename' = 'connectionid'
         'ENVVAR_example_uniquename'  = 'value'
     })
@@ -1502,14 +1503,16 @@ Ensure-AzDoBuildServiceHasContributeOnRepo -Organization $orgName -ProjectName $
 # Create/ensure actual Azure DevOps pipelines that point at the YAML files we just synced.
 $yamlFiles = @(
     'pipelines/BUILD.yml',
-    'pipelines/DEPLOY.yml',
+    'pipelines/DEPLOY-main.yml',
     'pipelines/EXPORT.yml',
     'pipelines/IMPORT.yml'
 )
 
 Ensure-AzDoPipelinesForMainRepo -Organization $orgName -Project $selectedProject.Name -Repository $mainRepo -YamlFiles $yamlFiles -FolderPath '\\ALM4Dataverse'
 
-Write-Section "Configuring solutions in alm-config.psd1"
+#endregion
+
+#region Solutions Selection
 
 function Get-DataverseSolutionsSelection {
     [CmdletBinding()]
@@ -1518,8 +1521,12 @@ function Get-DataverseSolutionsSelection {
     )
     
     try {
-        Write-Host "Connecting to Dataverse environment..." -ForegroundColor Yellow
+        Write-Host "Listing Dataverse environments current user has access to..." -ForegroundColor Yellow
         
+        Write-Host ""
+        Write-Host "When prompted, select your dataverse DEV environment containing the solution(s) you want to manage" -ForegroundColor Green
+        Write-Host ""
+
         # Connect to Dataverse using provided URL and token
         # If no URL is provided, Get-DataverseConnection will prompt for environment selection
         # We pass the token provider to allow it to get tokens for discovery AND the selected environment
@@ -1545,7 +1552,7 @@ function Get-DataverseSolutionsSelection {
             throw "Failed to connect to Dataverse environment."
         }
         
-        Write-Host "Connected to environment: $($connection.ConnectedOrgFriendlyName)" -ForegroundColor Green
+        Write-Host "Connected to environment: $($connection.ConnectedOrgFriendlyName)"
         Write-Host "Retrieving solutions..." -ForegroundColor Yellow
         
         # Get all solutions (excluding system solutions)
@@ -1569,11 +1576,17 @@ function Get-DataverseSolutionsSelection {
             Write-Host "No user-created solutions found in the environment." -ForegroundColor Yellow
             return @()
         }
+
+        Write-Host ""
+        Write-Host "Select the solution(s) to manage" -ForegroundColor Green
+        Write-Host "You must select solutions in dependency order (base solutions first)." -ForegroundColor Green
+        Write-Host "After selecting each solution, you will be prompted to select additional solutions or finish." -ForegroundColor Green
+        Write-Host ""
         
         # Prepare menu items
         $menuItems = @()
         foreach ($solution in $userSolutions) {
-            $displayName = "$($solution.friendlyname) ($($solution.uniquename)) - v$($solution.version)"
+            $displayName = "$($solution.friendlyname) ($($solution.uniquename))"
             $menuItems += $displayName
         }
         $menuItems += "--- Done selecting solutions ---"
@@ -1598,7 +1611,8 @@ function Get-DataverseSolutionsSelection {
             
             $title = if ($selectedSolutions.Count -eq 0) {
                 "Select solutions to include in ALM configuration (in dependency order)"
-            } else {
+            }
+            else {
                 "Selected $($selectedSolutions.Count) solution(s). Select additional solutions or finish"
             }
             
@@ -1616,7 +1630,7 @@ function Get-DataverseSolutionsSelection {
             if ($originalIndex -ge 0 -and $originalIndex -lt $userSolutions.Count) {
                 $selectedSolutions += $userSolutions[$originalIndex]
                 $selectedIndices += $originalIndex
-                Write-Host "Added: $($userSolutions[$originalIndex].friendlyname)" -ForegroundColor Green
+                Write-Host "Added: $($userSolutions[$originalIndex].friendlyname)"
             }
             
         } while ($true)
@@ -1626,16 +1640,16 @@ function Get-DataverseSolutionsSelection {
             return @()
         }
         
-        Write-Host "Selected $($selectedSolutions.Count) solution(s) for ALM configuration:" -ForegroundColor Green
+        Write-Host "Selected $($selectedSolutions.Count) solution(s) for ALM configuration:"
         foreach ($sol in $selectedSolutions) {
-            Write-Host "  - $($sol.friendlyname) ($($sol.uniquename))" -ForegroundColor Green
+            Write-Host "  - $($sol.friendlyname) ($($sol.uniquename))"
         }
         
         # Convert to the format needed for alm-config.psd1
         $configSolutions = @()
         foreach ($sol in $selectedSolutions) {
             $configSolutions += @{
-                name = $sol.uniquename
+                name            = $sol.uniquename
                 deployUnmanaged = $false
             }
         }
@@ -1670,7 +1684,8 @@ function Update-AlmConfigInMainRepo {
         if ($LASTEXITCODE -ne 0) {
             throw "Git clone exited with code $LASTEXITCODE"
         }
-    } catch {
+    }
+    catch {
         throw "Git clone failed for '$($MainRepo.remoteUrl)': $($_.Exception.Message)"
     }
 
@@ -1710,7 +1725,8 @@ function Update-AlmConfigInMainRepo {
                 $solutionsArray += "        }`n"
             }
             $solutionsArray += "    )`n"
-        } else {
+        }
+        else {
             $solutionsArray += "`n    )`n"
         }
         
@@ -1747,11 +1763,11 @@ function Update-AlmConfigInMainRepo {
             if ($LASTEXITCODE -ne 0) {
                 throw "Git push failed with exit code $LASTEXITCODE. Ensure you have permission and that authentication succeeds."
             }
-            Write-Host "alm-config.psd1 updated successfully in main repository." -ForegroundColor Green
+            Write-Host "alm-config.psd1 updated successfully in main repository."
             return $true
         }
         else {
-            Write-Host "No changes to alm-config.psd1; solutions already configured." -ForegroundColor Green
+            Write-Host "No changes to alm-config.psd1; solutions already configured."
             return $false
         }
     }
@@ -1761,24 +1777,200 @@ function Update-AlmConfigInMainRepo {
     }
 }
 
-# Check if user wants to configure solutions
-if (Read-YesNo -Prompt "Configure solutions in alm-config.psd1 by connecting to a Dataverse environment?" -DefaultNo) {
+#endregion
 
-    # Use the same access token from Azure DevOps setup
-    # We don't need to pre-fetch the token here anymore, as Get-DataverseSolutionsSelection will handle it via the callback
-    
-    $solutions = Get-DataverseSolutionsSelection
-    
-    if ($solutions.Count -gt 0) {
-        # Update alm-config.psd1 in the main repository and commit the changes
-        $configUpdated = Update-AlmConfigInMainRepo -Solutions $solutions -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
-        if ($configUpdated) {
-            Write-Host "Updated alm-config.psd1 with $($solutions.Count) solution(s) in main repository." -ForegroundColor Green
+#region Dataverse Environments Selection
+
+function Get-DataverseEnvironmentsSelection {
+    [CmdletBinding()]
+    param()
+
+    $selectedEnvironments = @()
+
+    while ($true) {
+        Clear-Host
+        Write-Host "Target Deployment Environments" -ForegroundColor Cyan
+        Write-Host "==============================" -ForegroundColor Cyan
+        Write-Host ""
+        
+        if ($selectedEnvironments.Count -eq 0) {
+            Write-Host "No environments selected." -ForegroundColor DarkGray
+        }
+        else {
+            $selectedEnvironments | Format-Table -Property ShortName, FriendlyName, Url -AutoSize
+        }
+        Write-Host ""
+
+        $menuItems = @('Add an environment', 'Clear list')
+        if ($selectedEnvironments.Count -gt 0) {
+            $menuItems += 'Done'
+        }
+
+        $selection = Select-FromMenu -Title "Manage deployment environments" -Items $menuItems
+
+        if ($null -eq $selection) { return $selectedEnvironments }
+
+        $action = $menuItems[$selection]
+
+        switch ($action) {
+            'Add an environment' {
+                try {
+                    Write-Host "Connecting to Dataverse environment..." -ForegroundColor Yellow
+                    
+                    $connection = Get-DataverseConnection -AccessToken { 
+                        param($resource)
+                        if (-not $resource) { $resource = 'https://globaldisco.crm.dynamics.com/' }
+                        try {
+                            $uri = [System.Uri]$resource
+                            $resource = $uri.GetLeftPart([System.UriPartial]::Authority)
+                        } catch {}
+                        $auth = Get-AuthToken -ResourceUrl $resource
+                        return $auth.AccessToken
+                    }
+
+                    if ($connection) {
+                        $shortName = Read-Host "Enter a short name for this environment (e.g. TEST, UAT, PROD)"
+                        if ([string]::IsNullOrWhiteSpace($shortName)) {
+                            Write-Host "Short name is required." -ForegroundColor Red
+                            Start-Sleep -Seconds 2
+                            continue
+                        }
+
+                        if ($selectedEnvironments | Where-Object { $_.ShortName -eq $shortName }) {
+                            Write-Host "An environment with short name '$shortName' is already selected." -ForegroundColor Red
+                            Start-Sleep -Seconds 2
+                            continue
+                        }
+
+                        $envInfo = [pscustomobject]@{
+                            ShortName = $shortName
+                            FriendlyName = $connection.ConnectedOrgFriendlyName
+                            Url = $connection.ConnectedOrgPublishedEndpoints["WebApplication"]
+                        }
+                        $selectedEnvironments += $envInfo
+                    }
+                }
+                catch {
+                    Write-Host "Failed to connect: $_" -ForegroundColor Red
+                    Start-Sleep -Seconds 3
+                }
+            }
+            'Clear list' {
+                $selectedEnvironments = @()
+                Write-Host "List cleared." -ForegroundColor Yellow
+                Start-Sleep -Seconds 1
+            }
+            'Done' {
+                return $selectedEnvironments
+            }
         }
     }
 }
-else {
-    Write-Host "Skipping solution configuration. You can manually edit the 'solutions' array in alm-config.psd1 in your main repository later." -ForegroundColor Yellow
+
+function Update-DeployPipelineInMainRepo {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][array]$Environments,
+        [Parameter(Mandatory)][object]$MainRepo,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+
+    if ($Environments.Count -eq 0) { return }
+
+    if (-not $MainRepo.remoteUrl) {
+        throw "Could not determine remoteUrl for repository '$($MainRepo.Name)'."
+    }
+
+    $cloneRoot = Join-Path $env:TEMP ("ALM4Dataverse-DeployUpdate-" + [guid]::NewGuid().ToString('n'))
+    New-Item -ItemType Directory -Path $cloneRoot -Force | Out-Null
+
+    Write-Host "Cloning '$($MainRepo.Name)' to update DEPLOY-main.yml..." -ForegroundColor Yellow
+    try {
+        & git -c "http.extraheader=AUTHORIZATION: bearer $AccessToken" clone $MainRepo.remoteUrl $cloneRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "Git clone exited with code $LASTEXITCODE"
+        }
+    }
+    catch {
+        throw "Git clone failed for '$($MainRepo.remoteUrl)': $($_.Exception.Message)"
+    }
+
+    Push-Location $cloneRoot
+    try {
+        $branch = 'main'
+        if ($MainRepo.defaultBranch) {
+            $branch = ConvertFrom-GitRefToBranchName -Ref $MainRepo.defaultBranch
+        }
+
+        & git checkout $branch
+        if ($LASTEXITCODE -ne 0) {
+            throw "Git checkout failed with exit code $LASTEXITCODE"
+        }
+
+        $deployYamlPath = Join-Path $cloneRoot 'pipelines\DEPLOY-main.yml'
+        if (-not (Test-Path $deployYamlPath)) {
+            throw "pipelines\DEPLOY-main.yml not found"
+        }
+
+        $newStages = "`n"
+        foreach ($env in $Environments) {
+            $newStages += "  - template: pipelines/templates/stages/deploy-environment.yml@ALM4Dataverse`n"
+            $newStages += "    parameters:`n"
+            $newStages += "      environmentName: $($env.ShortName)`n"
+        }
+
+        Add-Content -LiteralPath $deployYamlPath -Value $newStages
+
+        & git add pipelines\DEPLOY-main.yml
+        
+        & git diff --cached --quiet
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Committing DEPLOY-main.yml changes..." -ForegroundColor Yellow
+            
+            & git config user.name "ALM4Dataverse Setup" 2>$null
+            & git config user.email "setup@alm4dataverse.local" 2>$null
+            
+            & git commit -m "Configure deployment environments: $($Environments.ShortName -join ', ')"
+            
+            & git -c "http.extraheader=AUTHORIZATION: bearer $AccessToken" push origin $branch
+            if ($LASTEXITCODE -ne 0) {
+                throw "Git push failed."
+            }
+            Write-Host "DEPLOY-main.yml updated successfully."
+        }
+    }
+    finally {
+        Pop-Location
+        try { Remove-Item -LiteralPath $cloneRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+    }
 }
 
+Write-Section "Selecting Dataverse solution(s) to manage"
+
+# Use the same access token from Azure DevOps setup
+# We don't need to pre-fetch the token here anymore, as Get-DataverseSolutionsSelection will handle it via the callback
+
+$solutions = Get-DataverseSolutionsSelection
+
+if ($solutions.Count -gt 0) {
+    # Update alm-config.psd1 in the main repository and commit the changes
+    $configUpdated = Update-AlmConfigInMainRepo -Solutions $solutions -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
+    if ($configUpdated) {
+        Write-Host "Updated alm-config.psd1 with $($solutions.Count) solution(s) in main repository."
+    }
+}
+
+Write-Section "Selecting Deployment Environments"
+$environments = Get-DataverseEnvironmentsSelection
+
+if ($environments.Count -gt 0) {
+    Update-DeployPipelineInMainRepo -Environments $environments -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
+}
+
+#endregion
+
+Clear-Host
 Write-Host "Setup completed successfully!" -ForegroundColor Green
+Write-Host ""
+Write-Host "Next steps:" -ForegroundColor Green
+Write-Host "https://github.com/rnwood/alm4dataverse#getting-started" -ForegroundColor Green

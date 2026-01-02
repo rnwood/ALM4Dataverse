@@ -1,14 +1,22 @@
 ![ALM4Dataverse](logo.png)
 
-This repo contains an advanced and opinionated, re-usable and extendable application lifecycle management (ALM/CI-CD)
-implementation for Dataverse to be used with Azure DevOps.
+This repo contains:
+- an advanced and extendable application lifecycle management (ALM/CI-CD)
+implementation for Dataverse.
+- a set of process documentation and guidance on how to use and extend it.
 
-## How it compares to other options
+Currently to be used with Azure DevOps, but may be extended to GitHub in future (which is straightforward due to the way it is implemented).
 
+Features:
 
-| Aspect                                                                                | Power Platform Pipelines                                                                                                     | Your own AzDO Pipelines                                                                                                                                                                                                                           | ALM4Dataverse                                                                                                                                           |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Initial setup - setting up a single solution**                                      | Easy - point and click                                                                                                       | Moderate - several manual steps to follow. (However most examples leave you with a very incomplete setup)                                                                                                                                         | Easy/moderate - scripted guided setup                                                                                                                   |
-| **Adding config/system data**                                                         | Requires Power Automate Flow creation which isn't well suited to this task.                                                  | Can be added with the Configuration Migration Tool PPBT tasks, but these are fatally flawed and very limited. [Read why here.](https://rnwood.co.uk/posts/versioning-config-data-in-power-platform-beyond-the-cmt/)                                | Easy - edit 2 files. [Read about the approach used here.](https://rnwood.co.uk/posts/versioning-config-data-in-power-platform-beyond-the-cmt/\)          |
-| **Ensuring correct (and optimum) solution install, upgrade or update method is used** | Automatically does install or upgrade, but doesn't ever consider 'update' when it's possible (leaves some perf on the table) | The default PPBT tasks don't hande this. Can be achieved, but is quite complex (and most examples don't cover it). [Read more about this here](https://rnwood.co.uk/posts/azdo-dataverse-solution-deployment-solution-upgrade-vs-solution-import/) | Built-in logic for install vs upgrade (first time install vs upgrade) and upgrade vs update (when it's safe to do so because changes are additive only) |
-|                                                                                       |                                                                                                                              |                                                                                                                                                                                                                                                   |                                                                                                                                                         |
+- Handles zero to many Dataverse solutions per repo.
+- Correctly determines the install/upgrade/update method for each solution based on the state of the target environment
+- Supports branches, PRs etc with minimal re-configuration
+- Supports including config/system/lookup data
+- Easy to extend using the extensive PowerShell ecosystem.
+
+## Getting Started
+
+1) [Run the automated setup process](docs/automated-setup.md) to put in place the pipelines and other configuration needed.
+
+2) 
