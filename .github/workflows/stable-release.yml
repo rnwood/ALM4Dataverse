@@ -1,0 +1,102 @@
+name: Stable Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  create-stable-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get tag name
+        id: get_tag
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Update stable tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f stable
+          git push -f origin stable
+
+      - name: Generate release notes body
+        id: release_notes
+        run: |
+          TAG_NAME="${{ steps.get_tag.outputs.TAG_NAME }}"
+          
+          # Create release notes with link to getting started section
+          cat << EOF > release_notes.md
+          ## Getting Started
+          
+          📚 See the [Getting Started Guide](https://github.com/${{ github.repository }}/blob/${TAG_NAME}/README.md#getting-started) for instructions on how to use this release.
+          EOF
+          
+          echo "RELEASE_NOTES_FILE=release_notes.md" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const tagName = '${{ steps.get_tag.outputs.TAG_NAME }}';
+            const releaseNotesFile = '${{ steps.release_notes.outputs.RELEASE_NOTES_FILE }}';
+            const customNotes = fs.readFileSync(releaseNotesFile, 'utf8');
+            
+            // Generate release notes using GitHub API
+            let generatedNotes = '';
+            try {
+              const notesResponse = await github.rest.repos.generateReleaseNotes({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tagName,
+              });
+              generatedNotes = notesResponse.data.body;
+            } catch (error) {
+              console.log('Could not generate release notes automatically:', error.message);
+            }
+            
+            // Combine custom notes with generated notes
+            const body = customNotes + '\n\n' + (generatedNotes || '');
+            
+            // Create or update release
+            try {
+              // Try to get existing release
+              const { data: existingRelease } = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tagName,
+              });
+              
+              // Update existing release
+              await github.rest.repos.updateRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: existingRelease.id,
+                body: body,
+              });
+              
+              console.log('Updated existing release');
+            } catch (error) {
+              // Create new release
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tagName,
+                name: tagName,
+                body: body,
+                draft: false,
+                prerelease: false,
+              });
+              
+              console.log('Created new release');
+            }
