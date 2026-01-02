@@ -26,8 +26,12 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create or update the stable tag to point to the current commit
           git tag -f stable
           git push -f origin stable
+          
+          echo "Updated stable tag to point to ${{ steps.get_tag.outputs.TAG_NAME }}"
 
       - name: Generate release notes body
         id: release_notes
@@ -62,11 +66,13 @@ jobs:
               });
               generatedNotes = notesResponse.data.body;
             } catch (error) {
-              console.log('Could not generate release notes automatically:', error.message);
+              console.warn('Could not generate release notes automatically:', error.message);
             }
             
             // Combine custom notes with generated notes
-            const body = customNotes + '\n\n' + (generatedNotes || '');
+            const body = generatedNotes 
+              ? customNotes + '\n\n' + generatedNotes
+              : customNotes;
             
             // Create or update release
             try {
