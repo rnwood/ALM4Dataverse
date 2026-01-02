@@ -19,4 +19,12 @@ Features:
 
 1) [Run the automated setup process](docs/automated-setup.md) to put in place the pipelines and other configuration needed.
 
-2) 
+2) [Learn about the pipelines and how to use them](docs/pipeline-concepts.md) to understand the development workflow.
+
+## Documentation
+
+- [Automated Setup Guide](docs/automated-setup.md) - Initial configuration and setup
+- [Pipeline Concepts](docs/pipeline-concepts.md) - Understanding the Azure DevOps pipelines
+- [Pipeline Usage Instructions](docs/pipeline-usage.md) - Step-by-step workflows and common scenarios
+
+## 
