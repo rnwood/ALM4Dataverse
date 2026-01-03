@@ -1432,6 +1432,182 @@ function Ensure-AzDoPipelinesForMainRepo {
     }
 }
 
+function Ensure-AzDoDeploymentApproversTeam {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectName,
+        [Parameter(Mandatory)][string]$EnvironmentName
+    )
+
+    $teamName = "$EnvironmentName deployment approvers"
+    Write-Host "Ensuring team '$teamName' exists..." -ForegroundColor DarkGray
+
+    $team = Get-VSTeam -ProjectName $ProjectName -Name $teamName -ErrorAction SilentlyContinue | Select-Object -First 1
+    
+    if (-not $team) {
+        Write-Host "Creating team '$teamName'..." -ForegroundColor Yellow
+        Add-VSTeam -ProjectName $ProjectName -Name $teamName -Description "Approvers for $EnvironmentName deployment" | Out-Null
+        $team = Get-VSTeam -ProjectName $ProjectName -Name $teamName | Select-Object -First 1
+    }
+       
+    # Add current user to the team
+    
+    $me = Invoke-VSTeamRequest -NoProject -Method GET -Url "https://app.vssps.visualstudio.com/_apis/profile/profiles/me" -Version "7.1"
+    Write-Host "Adding current user ($($me.emailAddress)) to team '$teamName'..." -ForegroundColor Yellow
+    
+    $user = Get-VSTeamUser | Where-Object { $_.UniqueName -eq $me.emailAddress } | Select-Object -First 1
+    $group = Get-VSTeamGroup -ProjectName $ProjectName | Where-Object { $_.DisplayName -eq $teamName } | Select-Object -First 1
+
+    if ($user -and $group) {
+        Add-VSTeamMembership -MemberDescriptor $user.Descriptor -ContainerDescriptor $group.Descriptor | Out-Null
+    }
+    else {
+        Write-Warning "Could not resolve user or group to add membership."
+    }
+
+    
+    return $team
+}
+
+function Ensure-AzDoVariableGroupApproval {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Organization,
+        [Parameter(Mandatory)][string]$Project,
+        [Parameter(Mandatory)][string]$VariableGroupId,
+        [Parameter(Mandatory)][string]$VariableGroupName,
+        [Parameter(Mandatory)][object]$ApproverTeam
+    )
+
+    Write-Host "Ensuring Approval check on variable group '$VariableGroupName'..." -ForegroundColor DarkGray
+
+    # Check for existing checks
+    $uri = "https://dev.azure.com/$Organization/$Project/_apis/pipelines/checks/configurations?resourceType=variablegroup&resourceId=$VariableGroupId&api-version=7.1-preview.1"
+    $headers = @{ Authorization = "Bearer $($adoAccessToken.Token)" }
+    
+    $existingChecks = $null
+
+    $existingChecks = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers
+
+    
+    $hasApproval = $false
+    if ($existingChecks -and $existingChecks.count -gt 0) {
+        foreach ($check in $existingChecks.value) {
+            if ($check.resource.type -eq 'variablegroup' -and [string]$check.resource.id -eq [string]$VariableGroupId -and $check.type -and $check.type.name -eq 'Approval') {
+                $hasApproval = $true
+                break
+            }
+        }
+    }
+
+    if ($hasApproval) {
+        Write-Host "Approval check already exists on variable group '$VariableGroupName'."
+        return
+    }
+
+    Write-Host "Adding Approval check to variable group '$VariableGroupName'..." -ForegroundColor Yellow
+
+    # We need the descriptor for the team. Get-VSTeamTeam doesn't return it directly.
+    # We can find the group identity using Get-VSTeamGroup.
+    $teamIdentity = Get-VSTeamGroup -ProjectName $Project | Where-Object { $_.principalName -eq $ApproverTeam.name -or $_.displayName -eq $ApproverTeam.name } | Select-Object -First 1
+    
+    if (-not $teamIdentity) {
+        Write-Warning "Could not resolve identity for team '$($ApproverTeam.name)'. Skipping approval check creation."
+        return
+    }
+
+    $body = @{
+        type = @{
+            id = "8C6F20A7-A545-4486-9777-F762FAFE0D4D"
+            name = "Approval"
+        }
+        settings = @{
+            approvers = @(
+                @{
+                    id = $teamIdentity.originId
+                    descriptor = $teamIdentity.descriptor
+                    displayName = $teamIdentity.displayName
+                }
+            )
+            executionOrder = 1
+            minRequiredApprovers = 0
+            requesterCannotBeApprover = $false
+        }
+        resource = @{
+            type = "variablegroup"
+            id = [string]$VariableGroupId
+            name = $VariableGroupName
+        }
+        timeout = 43200
+    }
+
+    $resource = "pipelines/checks/configurations"
+    [void](Invoke-VSTeamRequest -Method POST -Resource $resource -Body ($body | ConvertTo-Json -Depth 10) -ContentType 'application/json' -Version '7.1-preview.1')
+    Write-Host "Approval check added."
+}
+
+function Ensure-AzDoVariableGroupExclusiveLock {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Organization,
+        [Parameter(Mandatory)][string]$Project,
+        [Parameter(Mandatory)][string]$VariableGroupId,
+        [Parameter(Mandatory)][string]$VariableGroupName
+    )
+
+    Write-Host "Ensuring ExclusiveLock check on variable group '$VariableGroupName'..." -ForegroundColor DarkGray
+
+    # Check for existing checks
+    $uri = "https://dev.azure.com/$Organization/$Project/_apis/pipelines/checks/configurations?resourceType=variablegroup&resourceId=$VariableGroupId&api-version=7.1-preview.1"
+    $headers = @{ Authorization = "Bearer $($adoAccessToken.Token)" }
+    
+    $existingChecks = $null
+    try {
+        $existingChecks = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers
+    } catch {
+        Write-Warning "Failed to list existing checks: $_"
+        if ($_.Exception.Response) {
+            $reader = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
+            Write-Warning "Response Body: $($reader.ReadToEnd())"
+        }
+    }
+    
+    $hasExclusiveLock = $false
+    if ($existingChecks -and $existingChecks.count -gt 0) {
+        foreach ($check in $existingChecks.value) {
+            if ($check.resource.type -eq 'variablegroup' -and [string]$check.resource.id -eq [string]$VariableGroupId -and $check.type -and $check.type.name -eq 'ExclusiveLock') {
+                $hasExclusiveLock = $true
+                break
+            }
+        }
+    }
+
+    if ($hasExclusiveLock) {
+        Write-Host "ExclusiveLock check already exists on variable group '$VariableGroupName'."
+        return
+    }
+
+    Write-Host "Adding ExclusiveLock check to variable group '$VariableGroupName'..." -ForegroundColor Yellow
+
+    $body = @{
+        type = @{
+            id = "2EF31AD6-BAA0-403A-8B45-2CBC9B4E5563"
+            name = "ExclusiveLock"
+        }
+        settings = @{}
+        resource = @{
+            type = "variablegroup"
+            id = [string]$VariableGroupId
+            name = $VariableGroupName
+        }
+        timeout = 43200
+    }
+
+    $resource = "pipelines/checks/configurations"
+    [void](Invoke-VSTeamRequest -Method POST -Resource $resource -Body ($body | ConvertTo-Json -Depth 10) -ContentType 'application/json' -Version '7.1-preview.1')
+    Write-Host "ExclusiveLock check added."
+}
+
 function Ensure-AzDoVariableGroupExists {
     [CmdletBinding()]
     param(
@@ -1442,37 +1618,54 @@ function Ensure-AzDoVariableGroupExists {
         [Parameter(Mandatory)][hashtable]$Variables
     )
 
+    $group = $null
+
     # Use VSTeam command to check for existing variable groups
     try {
         $existing = Get-VSTeamVariableGroup -ProjectName $Project -Name $GroupName -ErrorAction SilentlyContinue
         if ($existing) {
             Write-Host "Variable group '$GroupName' already exists (id: $($existing.id))."
-            return $existing
+            $group = $existing
         }
     }
     catch {
         # Group doesn't exist, continue with creation
     }
 
-    Write-Host "Creating variable group '$GroupName'..." -ForegroundColor Yellow
+    if (-not $group) {
+        Write-Host "Creating variable group '$GroupName'..." -ForegroundColor Yellow
 
-    # Build variables payload in the format expected by Add-VSTeamVariableGroup
-    $variablesPayload = @{}
-    foreach ($k in $Variables.Keys) {
-        $variablesPayload[$k] = @{ value = [string]$Variables[$k] }
+        # Build variables payload in the format expected by Add-VSTeamVariableGroup
+        $variablesPayload = @{}
+        foreach ($k in $Variables.Keys) {
+            $variablesPayload[$k] = @{ value = [string]$Variables[$k] }
+        }
+
+        # Use VSTeam command to create variable group
+        $created = Add-VSTeamVariableGroup -ProjectName $Project -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description 'ALM4Dataverse environment variable group (created by setup.ps1)'
+
+        if ($created -and $created.id) {
+            Write-Host "Created variable group '$GroupName' (id: $($created.id))."
+            $group = $created
+        }
+        else {
+            Write-Host "Created variable group '$GroupName'."
+            $group = $created
+        }
     }
 
-    # Use VSTeam command to create variable group
-    $created = Add-VSTeamVariableGroup -ProjectName $Project -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description 'ALM4Dataverse environment variable group (created by setup.ps1)'
+    if ($group -and $group.id) {
+        Ensure-AzDoVariableGroupExclusiveLock -Organization $Organization -Project $Project -VariableGroupId $group.id -VariableGroupName $GroupName
 
-    if ($created -and $created.id) {
-        Write-Host "Created variable group '$GroupName' (id: $($created.id))."
-    }
-    else {
-        Write-Host "Created variable group '$GroupName'."
+        if ($GroupName -notmatch 'Dev') {
+            $envName = $GroupName -replace '^Environment-', ''
+            $team = Ensure-AzDoDeploymentApproversTeam -ProjectName $Project -EnvironmentName $envName
+            Ensure-AzDoVariableGroupApproval -Organization $Organization -Project $Project -VariableGroupId $group.id -VariableGroupName $GroupName -ApproverTeam $team
+            
+        }
     }
 
-    return $created
+    return $group
 }
 
 Write-Section "Ensuring main repository contains pipeline YAMLs"
@@ -1551,6 +1744,8 @@ function Get-DataverseSolutionsSelection {
             throw "Failed to connect to Dataverse environment."
         }
         
+        $devEnvUrl = $connection.ConnectedOrgPublishedEndpoints["WebApplication"]
+        
         Write-Host "Connected to environment: $($connection.ConnectedOrgFriendlyName)"
         Write-Host "Retrieving solutions..." -ForegroundColor Yellow
         
@@ -1562,7 +1757,7 @@ function Get-DataverseSolutionsSelection {
         
         if (-not $allSolutions -or $allSolutions.Count -eq 0) {
             Write-Host "No unmanaged solutions found in the environment." -ForegroundColor Yellow
-            return @()
+            return @{ Solutions = @(); EnvironmentUrl = $devEnvUrl }
         }
         
         # Filter out system solutions and prepare for selection
@@ -1573,7 +1768,7 @@ function Get-DataverseSolutionsSelection {
         
         if (-not $userSolutions -or $userSolutions.Count -eq 0) {
             Write-Host "No user-created solutions found in the environment." -ForegroundColor Yellow
-            return @()
+            return @{ Solutions = @(); EnvironmentUrl = $devEnvUrl }
         }
 
         Write-Host ""
@@ -1636,7 +1831,7 @@ function Get-DataverseSolutionsSelection {
         
         if ($selectedSolutions.Count -eq 0) {
             Write-Host "No solutions selected." -ForegroundColor Yellow
-            return @()
+            return @{ Solutions = @(); EnvironmentUrl = $devEnvUrl }
         }
         
         Write-Host "Selected $($selectedSolutions.Count) solution(s) for ALM configuration:"
@@ -1653,7 +1848,7 @@ function Get-DataverseSolutionsSelection {
             }
         }
         
-        return $configSolutions
+        return @{ Solutions = $configSolutions; EnvironmentUrl = $devEnvUrl }
         
     }
     catch {
@@ -1782,7 +1977,9 @@ function Update-AlmConfigInMainRepo {
 
 function Get-DataverseEnvironmentsSelection {
     [CmdletBinding()]
-    param()
+    param(
+        [Parameter(Mandatory=$false)][string]$ExcludedUrl
+    )
 
     $selectedEnvironments = @()
 
@@ -1832,7 +2029,13 @@ function Get-DataverseEnvironmentsSelection {
 
                         $url =  $connection.ConnectedOrgPublishedEndpoints["WebApplication"]
 
-                      if ($selectedEnvironments | Where-Object { $_.Url -eq $url }) {
+                        if ($ExcludedUrl -and $url -eq $ExcludedUrl) {
+                            Write-Host "Cannot select the same environment used for solutions." -ForegroundColor Red
+                            Start-Sleep -Seconds 2
+                            continue
+                        }
+
+                        if ($selectedEnvironments | Where-Object { $_.Url -eq $url }) {
                             Write-Host "An environment with Url '$url' is already selected." -ForegroundColor Red
                             Start-Sleep -Seconds 2
                             continue
@@ -1844,7 +2047,7 @@ function Get-DataverseEnvironmentsSelection {
                             Start-Sleep -Seconds 2
                             continue
                         }
-                        $shortName = $shortName.Replace("-$branchName", "").Trim() + "-$branchName"
+                        $shortName = $shortName.Replace("-main", "").Trim() + "-main"
  
                         if ($selectedEnvironments | Where-Object { $_.ShortName -eq $shortName }) {
                             Write-Host "An environment with short name '$shortName' is already selected." -ForegroundColor Red
@@ -1961,7 +2164,9 @@ Write-Section "Selecting Dataverse solution(s) to manage"
 # Use the same access token from Azure DevOps setup
 # We don't need to pre-fetch the token here anymore, as Get-DataverseSolutionsSelection will handle it via the callback
 
-$solutions = Get-DataverseSolutionsSelection
+$result = Get-DataverseSolutionsSelection
+$solutions = $result.Solutions
+$devEnvUrl = $result.EnvironmentUrl
 
 if ($solutions.Count -gt 0) {
     # Update alm-config.psd1 in the main repository and commit the changes
@@ -1972,7 +2177,7 @@ if ($solutions.Count -gt 0) {
 }
 
 Write-Section "Selecting Deployment Environments"
-$environments = Get-DataverseEnvironmentsSelection
+$environments = Get-DataverseEnvironmentsSelection -ExcludedUrl $devEnvUrl
 
 if ($environments.Count -gt 0) {
     Update-DeployPipelineInMainRepo -Environments $environments -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
@@ -1996,4 +2201,4 @@ Clear-Host
 Write-Host "Setup completed successfully!" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Green
-Write-Host "https://github.com/rnwood/alm4dataverse#getting-started" -ForegroundColor Green
+Write-Host "https://github.com/rnwood/ALM4Dataverse/tree/stable#getting-started" -ForegroundColor Green
