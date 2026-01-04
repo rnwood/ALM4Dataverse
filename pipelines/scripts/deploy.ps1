@@ -148,11 +148,11 @@ foreach ($solution in $solutions) {
 
     $processes = Get-DataverseRecord -TableName workflow `
         -FilterValues @{"and" = @(
-                "solution.uniquename" = "$($solution.Name)"
-                "or" = @(
+                @{"solution.uniquename" = "$($solution.Name)"}
+                @{"or" = @(
                     @{ "statecode:NotEqual" = 1 } # Not Activated
                     @{ "ownerid:NotEqual" = $serviceAccountUser.Id } # Activated
-                )
+                )}
              )
         } `
         -Links @{"workflow.solutionid" = "solution.solutionid" } `
