@@ -134,10 +134,9 @@ foreach ($solution in $solutions) {
         $serviceAccountUpnKey = $solution.serviceAccountUpnConfigKey
     }
     else {
-        $serviceAccountUpnKey = 'DataverseServiceAccountUpn'
+        $serviceAccountUpnKey = 'ServiceAccountUpn'
     }
-    $serviceAccountUpnKey = $serviceAccountUpnKey.ToUpper()
-    [string] $serviceAccountUpn = get-content env:$serviceAccountUpnKey -erroraction continue
+    $serviceAccountUpn = $env:$serviceAccountUpnKey
     if ([string]::IsNullOrEmpty($serviceAccountUpn)) {
         Write-Host "##[error]Service account UPN not specified in environment variable '$serviceAccountUpnKey'."
         throw "Service account UPN not specified."
@@ -156,11 +155,11 @@ foreach ($solution in $solutions) {
 
     $processes = Get-DataverseRecord -TableName workflow `
         -FilterValues @{"and" = @(
-                @{"solution.uniquename" = "$($solution.Name)"}
-                @{"or" = @(
+                "solution.uniquename" = "$($solution.Name)"
+                "or" = @(
                     @{ "statecode:NotEqual" = 1 } # Not Activated
                     @{ "ownerid:NotEqual" = $serviceAccountUser.Id } # Activated
-                )}
+                )
              )
         } `
         -Links @{"workflow.solutionid" = "solution.solutionid" } `
