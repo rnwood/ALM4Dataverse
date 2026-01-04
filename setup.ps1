@@ -22,6 +22,8 @@ $ProgressPreference = 'SilentlyContinue' # Suppress progress bars
 
 function Write-Section {
     param([Parameter(Mandatory)][string]$Message)
+    
+    Write-Progress -Completed -Activity "Done"
     Clear-Host
     Write-Host "==== $Message ====" -ForegroundColor Cyan
     Write-Host ""
@@ -225,7 +227,7 @@ function Install-PortableGit {
 
 Write-Section "Initialising setup"
 
-$TempModuleRoot = Join-Path ([System.IO.Path]::GetTempPath()) "ALM4Dataverse\\Modules"
+$TempModuleRoot = Join-Path ([System.IO.Path]::GetTempPath()) "ALM4Dataverse\Modules"
 New-DirectoryIfMissing -Path $TempModuleRoot
 
 $delim = Get-ModulePathDelimiter
@@ -816,11 +818,6 @@ if (-not $destUrl) {
     throw "Could not determine remoteUrl for repository '$sharedRepoName'."
 }
 
-$branch = 'main'
-if ($repo.defaultBranch) {
-    $branch = ConvertFrom-GitRefToBranchName -Ref $repo.defaultBranch
-}
-
 # Create a temp folder for checking history
 $workRoot = Join-Path $env:TEMP ("ALM4Dataverse-Check-" + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
@@ -839,18 +836,6 @@ try {
     # Add upstream remote
     & git remote add upstream $sharedSourceUrl | Out-Null
     & git fetch upstream --tags | Out-Null
-
-    # Ensure we are on the correct branch
-    if ($branch) {
-        & git checkout $branch 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            # Try to create from upstream if available
-            & git checkout -b $branch upstream/$branch 2>$null
-            if ($LASTEXITCODE -ne 0) {
-                 & git checkout -b $branch
-            }
-        }
-    }
     
     # Check relationship between HEAD and upstream ref
     $targetRef = "upstream/$ALM4DataverseRef"
@@ -882,7 +867,7 @@ try {
                 & git merge --ff-only $upstreamRef
                 if ($LASTEXITCODE -ne 0) { throw "Git merge failed" }
                     
-                & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push origin $branch
+                & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push origin
                 if ($LASTEXITCODE -ne 0) { throw "Git push failed" }
                     
                 Write-Host "Repository updated successfully."
@@ -1085,7 +1070,7 @@ function Sync-CopyToYourRepoIntoGitRepo {
                 $destPath = Join-Path $cloneRoot "pipelines/DEPLOY-$branch.yml"
                 
                 $content = Get-Content -LiteralPath $file.FullName -Raw
-                $content = $content -replace "source: 'BUILD'", "source: '$($TargetRepo.Name)\BUILD'"
+                $content = $content -replace "source: 'BUILD'", "source: '\$($TargetRepo.Name)\BUILD'"
                 # Update trigger branch
                 $content = $content -replace "- main", "- $branch"
                 
@@ -1404,7 +1389,7 @@ function Ensure-AzDoYamlPipelineDefinition {
         [Parameter(Mandatory)][string]$DefinitionName,
         [Parameter(Mandatory)][string]$YamlPath,
         [Parameter(Mandatory)][int]$QueueId,
-        [Parameter()][string]$FolderPath = '\\'
+        [Parameter()][string]$FolderPath = '\'
     )
 
     $YamlPath = $YamlPath.TrimStart('/')
@@ -1671,6 +1656,50 @@ function Ensure-AzDoVariableGroupExclusiveLock {
     Write-Host "ExclusiveLock check added."
 }
 
+function Ensure-AzDoEnvironment {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Organization,
+        [Parameter(Mandatory)][string]$Project,
+        [Parameter(Mandatory)][string]$EnvironmentName,
+        [Parameter(Mandatory)][string]$Description
+    )
+
+    Write-Host "Ensuring Environment '$EnvironmentName'..." -ForegroundColor DarkGray
+
+    $headers = @{ Authorization = "Bearer $($adoAccessToken.Token)" }
+    
+    # List environments to check if it exists
+    $uri = "https://dev.azure.com/$Organization/$Project/_apis/pipelines/environments?name=$EnvironmentName&api-version=7.2-preview.1"
+    
+    try {
+        $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers
+        $env = $response.value | Where-Object { $_.name -eq $EnvironmentName } | Select-Object -First 1
+        
+        if ($env) {
+            Write-Host "Environment '$EnvironmentName' already exists (id: $($env.id))."
+            return $env
+        }
+
+        Write-Host "Creating Environment '$EnvironmentName'..." -ForegroundColor Yellow
+        
+        $body = @{
+            name = $EnvironmentName
+            description = $Description
+        }
+
+        $createUri = "https://dev.azure.com/$Organization/$Project/_apis/pipelines/environments?api-version=7.2-preview.1"
+        $created = Invoke-RestMethod -Uri $createUri -Method Post -Headers $headers -Body ($body | ConvertTo-Json) -ContentType "application/json"
+        
+        Write-Host "Created Environment '$EnvironmentName' (id: $($created.id))."
+        return $created
+    }
+    catch {
+        Write-Host "Failed to ensure environment: $($_.Exception.Message)" -ForegroundColor Red
+        throw
+    }
+}
+
 function Ensure-AzDoPipelinePermission {
     [CmdletBinding()]
     param(
@@ -1772,6 +1801,7 @@ function Ensure-AzDoServiceEndpoint {
             -Object $payload
 
         Write-Host "Service Endpoint '$ServiceEndpointName' created successfully."
+        Start-Sleep -Seconds 5 # Wait a bit for SE to be fully available
         return $response
     }
     catch {
@@ -2124,7 +2154,7 @@ $yamlFiles = @(
     'pipelines/IMPORT.yml'
 )
 
-Ensure-AzDoPipelinesForMainRepo -Organization $orgName -Project $selectedProject.Name -Repository $mainRepo -YamlFiles $yamlFiles -FolderPath "\\$($mainRepo.Name)"
+Ensure-AzDoPipelinesForMainRepo -Organization $orgName -Project $selectedProject.Name -Repository $mainRepo -YamlFiles $yamlFiles -FolderPath "\$($mainRepo.Name)"
 
 # Authorize pipelines for repositories
 Write-Section "Authorizing pipelines for repositories"
@@ -2132,7 +2162,7 @@ $pipelineNames = $yamlFiles | ForEach-Object { [System.IO.Path]::GetFileNameWith
 
 # Get all pipelines once to avoid multiple calls
 $allPipelines = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name
-$pipelineFolder = "\\$($mainRepo.Name)"
+$pipelineFolder = "\$($mainRepo.Name)"
 
 foreach ($name in $pipelineNames) {
     $pipeline = $allPipelines | Where-Object { $_.name -eq $name -and $_.path -eq $pipelineFolder } | Select-Object -First 1
@@ -2164,10 +2194,10 @@ function Get-ExistingSolutionsFromRepo {
     New-Item -ItemType Directory -Path $cloneRoot -Force | Out-Null
 
     try {
-        Write-Host "Checking existing configuration in '$($MainRepo.Name)'..." -ForegroundColor DarkGray
-        & git -c "http.extraheader=AUTHORIZATION: bearer $AccessToken" clone --depth 1 $MainRepo.remoteUrl $cloneRoot 2>&1 | Out-Null
+        Write-Host "Checking existing configuration in '$($MainRepo.Name) ($($MainRepo.remoteUrl))'..." -ForegroundColor DarkGray
+        cmd /c git -c "http.extraheader=AUTHORIZATION: bearer $accessToken" clone --depth 1 $MainRepo.remoteUrl $cloneRoot 2`>`&1 | out-host
         
-        if ($LASTEXITCODE -ne 0) { return @() }
+        if ($LASTEXITCODE -ne 0) { throw "Git clone failed with exit code $LASTEXITCODE." }
 
         $configPath = Join-Path $cloneRoot 'alm-config.psd1'
         if (Test-Path $configPath) {
@@ -2186,8 +2216,7 @@ function Get-ExistingSolutionsFromRepo {
 function Get-DataverseSolutionsSelection {
     [CmdletBinding()]
     param(
-        [Parameter()][object]$MainRepo,
-        [Parameter()][string]$AccessToken
+        [Parameter()][object]$MainRepo
     )
     
     try {
@@ -2251,20 +2280,20 @@ function Get-DataverseSolutionsSelection {
 
         $selectedSolutions = @()
 
-        # Pre-populate from MainRepo if provided
-        if ($MainRepo -and $AccessToken) {
-            $existingConfig = Get-ExistingSolutionsFromRepo -MainRepo $MainRepo -AccessToken $AccessToken
-            foreach ($existing in $existingConfig) {
-                $match = $userSolutions | Where-Object { $_.uniquename -eq $existing.name } | Select-Object -First 1
-                if ($match) {
-                    $selectedSolutions += $match
-                }
-            }
-            if ($selectedSolutions.Count -gt 0) {
-                Write-Host "Pre-selected $($selectedSolutions.Count) solution(s) from existing configuration." -ForegroundColor Green
-                Start-Sleep -Seconds 2
+        # Pre-populate from MainRepo
+    
+        $existingConfig = Get-ExistingSolutionsFromRepo -MainRepo $MainRepo -AccessToken $azDevOpsAccessToken
+        foreach ($existing in $existingConfig) {
+            $match = $userSolutions | Where-Object { $_.uniquename -eq $existing.name } | Select-Object -First 1
+            if ($match) {
+                $selectedSolutions += $match    
             }
         }
+        if ($selectedSolutions.Count -gt 0) {
+            Write-Host "Pre-selected $($selectedSolutions.Count) solution(s) from existing configuration." -ForegroundColor Green
+            Start-Sleep -Seconds 2
+        }
+        
 
         while ($true) {
             Clear-Host
@@ -2565,7 +2594,7 @@ function Get-ExistingEnvironmentsFromRepo {
 
     try {
         Write-Host "Checking existing environments in '$($MainRepo.Name)'..." -ForegroundColor DarkGray
-        & git -c "http.extraheader=AUTHORIZATION: bearer $AccessToken" clone --depth 1 $MainRepo.remoteUrl $cloneRoot 2>&1 | Out-Null
+        cmd /c git -c "http.extraheader=AUTHORIZATION: bearer $AccessToken" clone --depth 1 $MainRepo.remoteUrl $cloneRoot 2`>`&1 | out-host
         
         if ($LASTEXITCODE -ne 0) { return @() }
 
@@ -2609,7 +2638,7 @@ function Get-DataverseEnvironmentsSelection {
         $existingNames = @(Get-ExistingEnvironmentsFromRepo -MainRepo $MainRepo -AccessToken $AccessToken)
         
         if ($existingNames.Count -gt 0) {
-            Write-Host "Found $($existingNames.Count) environment(s) in DEPLOY-main.yml. Resolving details..." -ForegroundColor Cyan
+            Write-Host "Found $($existingNames.Count) environment(s) in deployment pipeline. Resolving details..." -ForegroundColor Cyan
             
             # Get Service Endpoints to resolve URLs
             $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $ProjectName -ErrorAction SilentlyContinue)
@@ -2744,7 +2773,7 @@ function Update-DeployPipelineInMainRepo {
     $cloneRoot = Join-Path $env:TEMP ("ALM4Dataverse-DeployUpdate-" + [guid]::NewGuid().ToString('n'))
     New-Item -ItemType Directory -Path $cloneRoot -Force | Out-Null
 
-    Write-Host "Cloning '$($MainRepo.Name)' to update DEPLOY-main.yml..." -ForegroundColor Yellow
+    Write-Host "Cloning '$($MainRepo.Name)' to update deployment pipeline..." -ForegroundColor Yellow
     try {
         & git -c "http.extraheader=AUTHORIZATION: bearer $AccessToken" clone $MainRepo.remoteUrl $cloneRoot
         if ($LASTEXITCODE -ne 0) {
@@ -2835,10 +2864,7 @@ function Update-DeployPipelineInMainRepo {
 
 Write-Section "Selecting Dataverse solution(s) to manage"
 
-# Use the same access token from Azure DevOps setup
-# We don't need to pre-fetch the token here anymore, as Get-DataverseSolutionsSelection will handle it via the callback
-
-$result = Get-DataverseSolutionsSelection -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
+$result = Get-DataverseSolutionsSelection -MainRepo $mainRepo
 $solutions = $result.Solutions
 $devEnvUrl = $result.EnvironmentUrl
 
@@ -2860,7 +2886,7 @@ if ($environments.Count -gt 0) {
     Update-DeployPipelineInMainRepo -Environments $environments -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
 
     # Get pipeline IDs for authorization
-    $pipelineFolder = "\\$($mainRepo.Name)"
+    $pipelineFolder = "\$($mainRepo.Name)"
     $exportPipeline = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name | Where-Object { $_.name -eq 'EXPORT' -and $_.path -eq $pipelineFolder } | Select-Object -First 1
     $deployPipeline = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name | Where-Object { $_.name -eq "DEPLOY-$mainRepoBranch" -and $_.path -eq $pipelineFolder } | Select-Object -First 1
 
@@ -2910,6 +2936,15 @@ if ($environments.Count -gt 0) {
                 if ($deployPipeline) {
                     Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'endpoint' -ResourceId $endpoint.id -PipelineId $deployPipeline.id
                 }
+            }
+        }
+
+        # Ensure Environment resource exists and authorize pipeline
+        if ($env.ShortName -ne "Dev-main") {
+            $azDoEnv = Ensure-AzDoEnvironment -Organization $orgName -Project $selectedProject.Name -EnvironmentName $env.ShortName -Description "Deployment environment for $($env.ShortName)"
+            
+            if ($azDoEnv -and $deployPipeline) {
+                Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'environment' -ResourceId $azDoEnv.id -PipelineId $deployPipeline.id
             }
         }
 
