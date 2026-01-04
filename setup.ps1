@@ -13,6 +13,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue' # Suppress progress bars
+
+# This script is designed to be downloadable and self-contained.
+# It's therefore quite long, as it includes all necessary functions and logic.
 
 #region Common Functions
 
@@ -835,6 +839,18 @@ try {
     # Add upstream remote
     & git remote add upstream $sharedSourceUrl | Out-Null
     & git fetch upstream --tags | Out-Null
+
+    # Ensure we are on the correct branch
+    if ($branch) {
+        & git checkout $branch 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            # Try to create from upstream if available
+            & git checkout -b $branch upstream/$branch 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                 & git checkout -b $branch
+            }
+        }
+    }
     
     # Check relationship between HEAD and upstream ref
     $targetRef = "upstream/$ALM4DataverseRef"
@@ -1048,10 +1064,66 @@ function Sync-CopyToYourRepoIntoGitRepo {
         Write-Host "Source: $SourceRoot" -ForegroundColor DarkGray
         Write-Host "Target: $cloneRoot" -ForegroundColor DarkGray
 
-        # Copy-Item with '*' won't include hidden items; use Get-ChildItem -Force instead.
-        $top = Get-ChildItem -LiteralPath $SourceRoot -Force
-        foreach ($item in $top) {
-            Copy-Item -LiteralPath $item.FullName -Destination $cloneRoot -Recurse -Force -ErrorAction Stop
+        # Copy files with prompt for overwrite
+        $allSourceFiles = Get-ChildItem -LiteralPath $SourceRoot -Recurse -Force | Where-Object { -not $_.PSIsContainer }
+        
+        foreach ($file in $allSourceFiles) {
+            $relativePath = $file.FullName.Substring($SourceRoot.Length).TrimStart('\', '/')
+            $destPath = Join-Path $cloneRoot $relativePath
+            
+            $destDir = Split-Path -Parent $destPath
+            if (-not (Test-Path -LiteralPath $destDir)) {
+                New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            }
+
+            # Special handling for DEPLOY-main.yml to inject folder name and rename file
+            $sourceFileToUse = $file.FullName
+            $isTempFile = $false
+
+            if ($relativePath -replace '\\', '/' -eq 'pipelines/DEPLOY-main.yml') {
+                # Rename destination file based on branch
+                $destPath = Join-Path $cloneRoot "pipelines/DEPLOY-$branch.yml"
+                
+                $content = Get-Content -LiteralPath $file.FullName -Raw
+                $content = $content -replace "source: 'BUILD'", "source: '$($TargetRepo.Name)\BUILD'"
+                # Update trigger branch
+                $content = $content -replace "- main", "- $branch"
+                
+                $tempFile = [System.IO.Path]::GetTempFileName()
+                $content | Set-Content -LiteralPath $tempFile -NoNewline
+                $sourceFileToUse = $tempFile
+                $isTempFile = $true
+            }
+
+            try {
+                if (Test-Path -LiteralPath $destPath) {
+                    $srcHash = Get-FileHash -LiteralPath $sourceFileToUse -Algorithm MD5
+                    $dstHash = Get-FileHash -LiteralPath $destPath -Algorithm MD5
+                    
+                    if ($srcHash.Hash -ne $dstHash.Hash) {
+                        $overwrite = Read-YesNo -Prompt "File '$relativePath' already exists and is different. Overwrite?" -DefaultNo
+                        
+                        if ($overwrite) {
+                            Copy-Item -LiteralPath $sourceFileToUse -Destination $destPath -Force
+                        }
+                        
+                        # Create template file with the new content
+                        Copy-Item -LiteralPath $sourceFileToUse -Destination "$destPath.template" -Force
+                    } else {
+                        # Files match, remove template if it exists
+                        if (Test-Path -LiteralPath "$destPath.template") {
+                            Remove-Item -LiteralPath "$destPath.template" -Force
+                        }
+                    }
+                } else {
+                    Copy-Item -LiteralPath $sourceFileToUse -Destination $destPath -Force
+                }
+            }
+            finally {
+                if ($isTempFile -and (Test-Path -LiteralPath $sourceFileToUse)) {
+                    Remove-Item -LiteralPath $sourceFileToUse -Force
+                }
+            }
         }
       
         
@@ -1337,7 +1409,7 @@ function Ensure-AzDoYamlPipelineDefinition {
 
     $YamlPath = $YamlPath.TrimStart('/')
 
-    $existing = @(Get-VSTeamBuildDefinition -ProjectName $Project) | Where-Object { $_.name -eq $DefinitionName }
+    $existing = @(Get-VSTeamBuildDefinition -ProjectName $Project) | Where-Object { $_.name -eq $DefinitionName -and $_.path -eq $FolderPath }
     $def = $existing | Select-Object -First 1
 
     if (-not $def) {
@@ -1462,7 +1534,7 @@ function Ensure-AzDoDeploymentApproversTeam {
         Add-VSTeamMembership -MemberDescriptor $user.Descriptor -ContainerDescriptor $group.Descriptor | Out-Null
     }
     else {
-        Write-Warning "Could not resolve user or group to add membership."
+        throw "Could not resolve user or group to add membership."
     }
 
     
@@ -1512,8 +1584,7 @@ function Ensure-AzDoVariableGroupApproval {
     $teamIdentity = Get-VSTeamGroup -ProjectName $Project | Where-Object { $_.principalName -eq $ApproverTeam.name -or $_.displayName -eq $ApproverTeam.name } | Select-Object -First 1
     
     if (-not $teamIdentity) {
-        Write-Warning "Could not resolve identity for team '$($ApproverTeam.name)'. Skipping approval check creation."
-        return
+        throw "Could not resolve identity for team '$($ApproverTeam.name)' for approval check creation."
     }
 
     $body = @{
@@ -1562,16 +1633,8 @@ function Ensure-AzDoVariableGroupExclusiveLock {
     $headers = @{ Authorization = "Bearer $($adoAccessToken.Token)" }
     
     $existingChecks = $null
-    try {
-        $existingChecks = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers
-    } catch {
-        Write-Warning "Failed to list existing checks: $_"
-        if ($_.Exception.Response) {
-            $reader = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
-            Write-Warning "Response Body: $($reader.ReadToEnd())"
-        }
-    }
-    
+    $existingChecks = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers
+
     $hasExclusiveLock = $false
     if ($existingChecks -and $existingChecks.count -gt 0) {
         foreach ($check in $existingChecks.value) {
@@ -1606,6 +1669,362 @@ function Ensure-AzDoVariableGroupExclusiveLock {
     $resource = "pipelines/checks/configurations"
     [void](Invoke-VSTeamRequest -Method POST -Resource $resource -Body ($body | ConvertTo-Json -Depth 10) -ContentType 'application/json' -Version '7.1-preview.1')
     Write-Host "ExclusiveLock check added."
+}
+
+function Ensure-AzDoPipelinePermission {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Organization,
+        [Parameter(Mandatory)][string]$Project,
+        [Parameter(Mandatory)][string]$ResourceType, # 'endpoint' or 'variablegroup'
+        [Parameter(Mandatory)][string]$ResourceId,
+        [Parameter(Mandatory)][int]$PipelineId
+    )
+
+    Write-Host "Ensuring pipeline $PipelineId has permission on $ResourceType $ResourceId..." -ForegroundColor DarkGray
+
+    $headers = @{ Authorization = "Bearer $($adoAccessToken.Token)" }
+    
+    # Check existing permissions
+    $uri = "https://dev.azure.com/$Organization/$Project/_apis/pipelines/pipelinePermissions/$ResourceType/$ResourceId`?api-version=7.1-preview.1"
+    
+    try {
+        $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers
+        
+        $isAuthorized = $false
+        if ($response.pipelines) {
+            foreach ($p in $response.pipelines) {
+                if ($p.id -eq $PipelineId -and $p.authorized -eq $true) {
+                    $isAuthorized = $true
+                    break
+                }
+            }
+        }
+
+        if ($isAuthorized) {
+            Write-Host "Pipeline $PipelineId is already authorized."
+            return
+        }
+
+        Write-Host "Authorizing pipeline $PipelineId..." -ForegroundColor Yellow
+        
+        $body = @{
+            pipelines = @(
+                @{
+                    id = $PipelineId
+                    authorized = $true
+                }
+            )
+        }
+
+        $patchUri = "https://dev.azure.com/$Organization/$Project/_apis/pipelines/pipelinePermissions/$ResourceType/$ResourceId`?api-version=7.1-preview.1"
+        [void](Invoke-RestMethod -Uri $patchUri -Method Patch -Headers $headers -Body ($body | ConvertTo-Json) -ContentType "application/json")
+        
+        Write-Host "Pipeline authorized successfully."
+    }
+    catch {
+        Write-Host "Failed to authorize pipeline: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Warning "Could not authorize pipeline. You may need to authorize it manually when running the pipeline."
+    }
+}
+
+function Ensure-AzDoServiceEndpoint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectName,
+        [Parameter(Mandatory)][string]$ServiceEndpointName,
+        [Parameter(Mandatory)][string]$EnvironmentUrl,
+        [Parameter(Mandatory)][string]$ApplicationId,
+        [Parameter(Mandatory)][string]$ClientSecret,
+        [Parameter(Mandatory)][string]$TenantId
+    )
+
+    Write-Host "Ensuring Service Endpoint '$ServiceEndpointName'..." -ForegroundColor DarkGray
+
+    # Get-VSTeamServiceEndpoint does not support -Name, so we filter client-side
+    $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $ProjectName -ErrorAction SilentlyContinue)
+    $existing = $endpoints | Where-Object { $_.name -eq $ServiceEndpointName } | Select-Object -First 1
+    
+    if ($existing) {
+        Write-Host "Service Endpoint '$ServiceEndpointName' already exists."
+        return $existing
+    }
+
+    Write-Host "Creating Service Endpoint '$ServiceEndpointName'..." -ForegroundColor Yellow
+
+    try {
+        $payload = @{
+            url = $EnvironmentUrl
+            authorization = @{
+                parameters = @{
+                    "tenantId" = $TenantId
+                    "applicationId" = $ApplicationId
+                    "clientSecret" = $ClientSecret
+                }
+                scheme = "None"
+            }
+            data = @{}
+        }
+
+        $response = Add-VSTeamServiceEndpoint -ProjectName $ProjectName `
+            -EndpointName $ServiceEndpointName `
+            -EndpointType "powerplatform-spn" `
+            -Object $payload
+
+        Write-Host "Service Endpoint '$ServiceEndpointName' created successfully."
+        return $response
+    }
+    catch {
+        Write-Host "Failed to create Service Endpoint '$ServiceEndpointName': $($_.Exception.Message)" -ForegroundColor Red
+        throw
+    }
+}
+
+function Ensure-EntraIdServicePrincipal {
+    param(
+        [Parameter(Mandatory)][string]$ApplicationId,
+        [Parameter(Mandatory)][string]$TenantId
+    )
+
+    $graphToken = Get-AuthToken -ResourceUrl "https://graph.microsoft.com" -TenantId $TenantId
+    $headers = @{
+        Authorization = "Bearer $($graphToken.AccessToken)"
+        "Content-Type" = "application/json"
+    }
+
+    # Check if SP exists
+    $uri = "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '$ApplicationId'"
+    try {
+        $existing = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+        if ($existing.value.Count -gt 0) {
+            Write-Host "Service Principal for App '$ApplicationId' already exists."
+            return $existing.value[0]
+        }
+    }
+    catch {
+        Write-Warning "Failed to check for existing Service Principal: $($_.Exception.Message)"
+    }
+
+    # Create SP
+    Write-Host "Creating Service Principal for App '$ApplicationId'..." -ForegroundColor Yellow
+    $body = @{
+        appId = $ApplicationId
+    }
+    
+    try {
+        $sp = Invoke-RestMethod -Uri "https://graph.microsoft.com/v1.0/servicePrincipals" -Headers $headers -Method Post -Body ($body | ConvertTo-Json)
+        Write-Host "Created Service Principal ($($sp.id))."
+        start-sleep -Seconds 10 # Wait a bit for SP to be fully available
+        return $sp
+    }
+    catch {
+        Write-Error "Failed to create Service Principal: $($_.Exception.Message)"
+        throw
+    }
+}
+
+function New-EntraIdApplication {
+    param(
+        [Parameter(Mandatory)][string]$DisplayName,
+        [Parameter(Mandatory)][string]$TenantId
+    )
+    
+    # Get token for Graph
+    $graphToken = Get-AuthToken -ResourceUrl "https://graph.microsoft.com" -TenantId $TenantId
+    $headers = @{
+        Authorization = "Bearer $($graphToken.AccessToken)"
+        "Content-Type" = "application/json"
+    }
+
+    # Check if app exists
+    $filter = "displayName eq '$DisplayName'"
+    $uri = "https://graph.microsoft.com/v1.0/applications?`$filter=$filter"
+    
+    $existing = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+    
+    $app = $null
+    if ($existing.value.Count -gt 0) {
+        $app = $existing.value[0]
+        Write-Host "Found existing App Registration '$DisplayName' ($($app.appId))."
+    }
+    else {
+        Write-Host "Creating App Registration '$DisplayName'..." -ForegroundColor Yellow
+        $body = @{
+            displayName = $DisplayName
+            signInAudience = "AzureADMyOrg"
+        }
+        $app = Invoke-RestMethod -Uri "https://graph.microsoft.com/v1.0/applications" -Headers $headers -Method Post -Body ($body | ConvertTo-Json)
+        Write-Host "Created App Registration '$DisplayName' ($($app.appId))."
+    }
+
+    # Create secret
+    Write-Host "Creating client secret..." -ForegroundColor Yellow
+    $secretBody = @{
+        passwordCredential = @{
+            displayName = "ALM4Dataverse Setup"
+        }
+    }
+    $secretUri = "https://graph.microsoft.com/v1.0/applications/$($app.id)/addPassword"
+    $secretResponse = Invoke-RestMethod -Uri $secretUri -Headers $headers -Method Post -Body ($secretBody | ConvertTo-Json)
+    
+    [void](Ensure-EntraIdServicePrincipal -ApplicationId $app.appId -TenantId $TenantId)
+
+    return [pscustomobject]@{
+        Name = $DisplayName
+        ApplicationId = $app.appId
+        ClientSecret = $secretResponse.secretText
+        TenantId = $TenantId
+        IsExistingServiceConnection = $false
+    }
+}
+
+function Get-PowerPlatformSCCredentials {
+    [CmdletBinding()]
+    param(
+        [Parameter()][array]$ExistingCredentials,
+        [Parameter()][string]$TenantId,
+        [Parameter()][string]$ProjectName,
+        [Parameter()][string]$EnvironmentName
+    )
+
+    # 1. Try to find existing Service Connection to see if we can reuse its App ID
+    $existingScAppId = $null
+    try {
+        $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $ProjectName -ErrorAction SilentlyContinue)
+        $existingEndpoint = $endpoints | Where-Object { $_.name -eq $EnvironmentName } | Select-Object -First 1
+        if ($existingEndpoint -and $existingEndpoint.authorization -and $existingEndpoint.authorization.parameters) {
+            $existingScAppId = $existingEndpoint.authorization.parameters.applicationId
+        }
+    }
+    catch {
+        # Ignore errors checking for existing SC
+    }
+
+    # 2. Search Entra ID for relevant applications
+    $foundApps = @()
+    try {
+        $graphToken = Get-AuthToken -ResourceUrl "https://graph.microsoft.com" -TenantId $TenantId
+        $headers = @{ Authorization = "Bearer $($graphToken.AccessToken)" }
+
+        # If we have an existing SC App ID, ensure it's in the list
+        if ($existingScAppId) {
+            $alreadyFound = $foundApps | Where-Object { $_.appId -eq $existingScAppId }
+            if (-not $alreadyFound) {
+                $filter = "appId eq '$existingScAppId'"
+                $uri = "https://graph.microsoft.com/v1.0/applications?`$filter=$filter&`$select=appId,displayName,id"
+                $response = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+                if ($response.value) {
+                    $foundApps += $response.value
+                }
+            }
+        }
+    }
+    catch {
+        Write-Warning "Failed to list applications from Entra ID: $($_.Exception.Message)"
+    }
+
+    # 3. Build Menu
+    $menuItems = @()
+    $menuActions = @() # To track what each item does
+
+    # Priority 1: Recommended App (Existing SC or Exact Name Match)
+    $recommendedApp = $null
+    $exactNameMatch = "$ProjectName - $EnvironmentName - deployment"
+    
+    if ($existingScAppId) {
+        $recommendedApp = $foundApps | Where-Object { $_.appId -eq $existingScAppId } | Select-Object -First 1
+    }
+   
+    if ($recommendedApp) {
+        $menuItems += "Use existing: $($recommendedApp.displayName) ($($recommendedApp.appId))"
+        $menuActions += @{ Type = 'ExistingSCApp'; App = $recommendedApp }
+        
+        # Remove from foundApps to avoid duplicate listing
+        $foundApps = $foundApps | Where-Object { $_.appId -ne $recommendedApp.appId }
+    }
+
+    # Standard Options
+    $menuItems += "Create new App Registration (Entra ID)"
+    $menuActions += @{ Type = 'CreateNew' }
+
+    $menuItems += "Enter existing Service Principal details"
+    $menuActions += @{ Type = 'Manual' }
+
+    # Cached Credentials
+    foreach ($c in $ExistingCredentials) {
+        $menuItems += "Reuse: $($c.Name) ($($c.ApplicationId))"
+        $menuActions += @{ Type = 'Cached'; Creds = $c }
+    }
+ 
+
+    # 4. Show Menu
+    $selection = Select-FromMenu -Title "Select Service Principal credentials for '$EnvironmentName'" -Items $menuItems
+    if ($null -eq $selection) { throw "No credential selected." }
+
+    $action = $menuActions[$selection]
+
+    if ($action.Type -eq 'Cached') {
+        return $action.Creds
+    }
+    elseif ($action.Type -eq 'CreateNew') {
+        $appName = "$ProjectName - $EnvironmentName - deployment"
+        return New-EntraIdApplication -DisplayName $appName -TenantId $TenantId
+    }
+    elseif ($action.Type -eq 'ExistingSCApp') {
+        $app = $action.App
+        Write-Host "Selected App: $($app.displayName) ($($app.appId))" -ForegroundColor Cyan
+     
+        [void](Ensure-EntraIdServicePrincipal -ApplicationId $app.appId -TenantId $TenantId)
+
+        return [pscustomobject]@{
+            Name = $app.displayName
+            ApplicationId = $app.appId
+            ClientSecret = $null
+            TenantId = $TenantId
+            IsExistingServiceConnection = $true
+        }
+    }
+    else { # Manual
+        Write-Host "Enter Service Principal details:" -ForegroundColor Cyan
+        $name = Read-Host "Credential Name (for reuse reference)"
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = "Credential-" + (Get-Date -Format "HHmm") }
+        
+        while ($true) {
+            $appId = Read-Host "Application ID (Client ID)"
+            if ($appId -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+                break
+            }
+            else {
+                Write-Warning "The Application ID must be a valid GUID. Please try again."
+            }
+        }
+        
+        $secret = $null
+        while ($true) {
+            $secretSecure = Read-Host "Client Secret" -AsSecureString
+            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secretSecure)
+            $secret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+            
+            if ($secret -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+                Write-Warning "The Client Secret looks like a GUID. You should enter the Secret VALUE, not the Secret ID."
+                if (Read-YesNo -Prompt "Are you sure this is the Secret Value?" -DefaultNo) {
+                    break
+                }
+            } else {
+                break
+            }
+        }
+
+        [void](Ensure-EntraIdServicePrincipal -ApplicationId $appId -TenantId $TenantId)
+
+        return [pscustomobject]@{
+            Name = $name
+            ApplicationId = $appId
+            ClientSecret = $secret
+            TenantId = $TenantId
+            IsExistingServiceConnection = $false
+        }
+    }
 }
 
 function Ensure-AzDoVariableGroupExists {
@@ -1693,22 +2112,81 @@ Write-Section "Ensuring Build Service has Contribute on main repo"
 Ensure-AzDoBuildServiceHasContributeOnRepo -Organization $orgName -ProjectName $selectedProject.Name -ProjectId $selectedProject.Id -RepositoryId $mainRepo.Id
 
 # Create/ensure actual Azure DevOps pipelines that point at the YAML files we just synced.
+$mainRepoBranch = 'main'
+if ($mainRepo.defaultBranch) {
+    $mainRepoBranch = ConvertFrom-GitRefToBranchName -Ref $mainRepo.defaultBranch
+}
+
 $yamlFiles = @(
     'pipelines/BUILD.yml',
-    'pipelines/DEPLOY-main.yml',
+    "pipelines/DEPLOY-$mainRepoBranch.yml",
     'pipelines/EXPORT.yml',
     'pipelines/IMPORT.yml'
 )
 
-Ensure-AzDoPipelinesForMainRepo -Organization $orgName -Project $selectedProject.Name -Repository $mainRepo -YamlFiles $yamlFiles -FolderPath '\\ALM4Dataverse'
+Ensure-AzDoPipelinesForMainRepo -Organization $orgName -Project $selectedProject.Name -Repository $mainRepo -YamlFiles $yamlFiles -FolderPath "\\$($mainRepo.Name)"
+
+# Authorize pipelines for repositories
+Write-Section "Authorizing pipelines for repositories"
+$pipelineNames = $yamlFiles | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_) }
+
+# Get all pipelines once to avoid multiple calls
+$allPipelines = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name
+$pipelineFolder = "\\$($mainRepo.Name)"
+
+foreach ($name in $pipelineNames) {
+    $pipeline = $allPipelines | Where-Object { $_.name -eq $name -and $_.path -eq $pipelineFolder } | Select-Object -First 1
+    
+    if ($pipeline) {
+        # Authorize Main Repo
+        $mainRepoResourceId = "$($selectedProject.Id).$($mainRepo.Id)"
+        Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'repository' -ResourceId $mainRepoResourceId -PipelineId $pipeline.id
+
+        # Authorize Shared Repo
+        $sharedRepoResourceId = "$($selectedProject.Id).$($repo.Id)"
+        Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'repository' -ResourceId $sharedRepoResourceId -PipelineId $pipeline.id
+    }
+}
 
 #endregion
 
-#region Solutions Selection
+#region Dev Environment and Solutions Selection
+
+function Get-ExistingSolutionsFromRepo {
+    param(
+        [Parameter(Mandatory)][object]$MainRepo,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+    
+    if (-not $MainRepo.remoteUrl) { return @() }
+
+    $cloneRoot = Join-Path $env:TEMP ("ALM4Dataverse-ConfigRead-" + [guid]::NewGuid().ToString('n'))
+    New-Item -ItemType Directory -Path $cloneRoot -Force | Out-Null
+
+    try {
+        Write-Host "Checking existing configuration in '$($MainRepo.Name)'..." -ForegroundColor DarkGray
+        & git -c "http.extraheader=AUTHORIZATION: bearer $AccessToken" clone --depth 1 $MainRepo.remoteUrl $cloneRoot 2>&1 | Out-Null
+        
+        if ($LASTEXITCODE -ne 0) { return @() }
+
+        $configPath = Join-Path $cloneRoot 'alm-config.psd1'
+        if (Test-Path $configPath) {
+            $config = Import-PowerShellDataFile -Path $configPath
+            if ($config.solutions) {
+                return $config.solutions
+            }
+        }
+        return @()
+    }
+    finally {
+        try { Remove-Item -LiteralPath $cloneRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+    }
+}
 
 function Get-DataverseSolutionsSelection {
     [CmdletBinding()]
     param(
+        [Parameter()][object]$MainRepo,
         [Parameter()][string]$AccessToken
     )
     
@@ -1771,70 +2249,99 @@ function Get-DataverseSolutionsSelection {
             return @{ Solutions = @(); EnvironmentUrl = $devEnvUrl }
         }
 
-        Write-Host ""
-        Write-Host "Select the solution(s) to manage" -ForegroundColor Green
-        Write-Host "You must select solutions in dependency order (base solutions first)." -ForegroundColor Green
-        Write-Host "After selecting each solution, you will be prompted to select additional solutions or finish." -ForegroundColor Green
-        Write-Host ""
-        
-        # Prepare menu items
-        $menuItems = @()
-        foreach ($solution in $userSolutions) {
-            $displayName = "$($solution.friendlyname) ($($solution.uniquename))"
-            $menuItems += $displayName
-        }
-        $menuItems += "--- Done selecting solutions ---"
-        
-        # Multi-select loop
         $selectedSolutions = @()
-        $selectedIndices = @()
-        
-        do {
-            $availableItems = @()
-            for ($i = 0; $i -lt ($menuItems.Count - 1); $i++) {
-                if ($i -notin $selectedIndices) {
-                    $availableItems += $menuItems[$i]
+
+        # Pre-populate from MainRepo if provided
+        if ($MainRepo -and $AccessToken) {
+            $existingConfig = Get-ExistingSolutionsFromRepo -MainRepo $MainRepo -AccessToken $AccessToken
+            foreach ($existing in $existingConfig) {
+                $match = $userSolutions | Where-Object { $_.uniquename -eq $existing.name } | Select-Object -First 1
+                if ($match) {
+                    $selectedSolutions += $match
+                }
+            }
+            if ($selectedSolutions.Count -gt 0) {
+                Write-Host "Pre-selected $($selectedSolutions.Count) solution(s) from existing configuration." -ForegroundColor Green
+                Start-Sleep -Seconds 2
+            }
+        }
+
+        while ($true) {
+            Clear-Host
+            Write-Host "Solutions Configuration" -ForegroundColor Cyan
+            Write-Host "=======================" -ForegroundColor Cyan
+            Write-Host ""
+            
+            if ($selectedSolutions.Count -eq 0) {
+                Write-Host "No solutions selected." -ForegroundColor DarkGray
+            }
+            else {
+                Write-Host "Selected solutions (in dependency order):" -ForegroundColor Green
+                $selectedSolutions | Select-Object @{N='Friendly Name';E={$_.friendlyname}}, @{N='Unique Name';E={$_.uniquename}}, Version | Format-Table -AutoSize | Out-Host
+            }
+            Write-Host ""
+
+            $menuItems = @('Add a solution', 'Clear list')
+            if ($selectedSolutions.Count -gt 0) {
+                $menuItems += 'Done'
+            }
+
+            $selection = Select-FromMenu -Title "Manage solutions" -Items $menuItems
+
+            if ($null -eq $selection) { 
+                if ($selectedSolutions.Count -gt 0) {
+                    break
+                }
+                return @{ Solutions = @(); EnvironmentUrl = $devEnvUrl } 
+            }
+
+            $action = $menuItems[$selection]
+
+            switch ($action) {
+                'Add a solution' {
+                    # Filter out already selected
+                    $availableSolutions = $userSolutions | Where-Object { 
+                        $u = $_.uniquename
+                        -not ($selectedSolutions | Where-Object { $_.uniquename -eq $u })
+                    }
+
+                    if ($availableSolutions.Count -eq 0) {
+                        Write-Host "All available solutions have been selected." -ForegroundColor Yellow
+                        Start-Sleep -Seconds 2
+                        continue
+                    }
+
+                    $solMenu = @()
+                    foreach ($s in $availableSolutions) {
+                        $solMenu += "$($s.friendlyname) ($($s.uniquename))"
+                    }
+                    $solMenu += "--- Cancel ---"
+
+                    $solIndex = Select-FromMenu -Title "Select a solution to add" -Items $solMenu
+                    
+                    if ($null -ne $solIndex -and $solIndex -lt $availableSolutions.Count) {
+                        $selectedSolutions += $availableSolutions[$solIndex]
+                    }
+                }
+                'Clear list' {
+                    $selectedSolutions = @()
+                    Write-Host "List cleared." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 1
+                }
+                'Done' {
+                    break
                 }
             }
             
-            if ($availableItems.Count -eq 0) {
-                break
-            }
-            
-            $availableItems += "--- Done selecting solutions ---"
-            
-            $title = if ($selectedSolutions.Count -eq 0) {
-                "Select solutions to include in ALM configuration (in dependency order)"
-            }
-            else {
-                "Selected $($selectedSolutions.Count) solution(s). Select additional solutions or finish"
-            }
-            
-            $selectedIndex = Select-FromMenu -Title $title -Items $availableItems
-            
-            if ($null -eq $selectedIndex -or $selectedIndex -eq ($availableItems.Count - 1)) {
-                # User selected "Done" or cancelled
-                break
-            }
-            
-            # Find the original index of the selected item
-            $selectedDisplayName = $availableItems[$selectedIndex]
-            $originalIndex = $menuItems.IndexOf($selectedDisplayName)
-            
-            if ($originalIndex -ge 0 -and $originalIndex -lt $userSolutions.Count) {
-                $selectedSolutions += $userSolutions[$originalIndex]
-                $selectedIndices += $originalIndex
-                Write-Host "Added: $($userSolutions[$originalIndex].friendlyname)"
-            }
-            
-        } while ($true)
+            if ($action -eq 'Done') { break }
+        }
         
         if ($selectedSolutions.Count -eq 0) {
             Write-Host "No solutions selected." -ForegroundColor Yellow
             return @{ Solutions = @(); EnvironmentUrl = $devEnvUrl }
         }
         
-        Write-Host "Selected $($selectedSolutions.Count) solution(s) for ALM configuration:"
+        Write-Host "Final selection:"
         foreach ($sol in $selectedSolutions) {
             Write-Host "  - $($sol.friendlyname) ($($sol.uniquename))"
         }
@@ -1973,15 +2480,155 @@ function Update-AlmConfigInMainRepo {
 
 #endregion
 
-#region Dataverse Environments Selection
+#region Deployment Environments Selection
+
+function Ensure-DataverseApplicationUser {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentUrl,
+        [Parameter(Mandatory)][string]$ApplicationId,
+        [Parameter(Mandatory)][string]$TenantId
+    )
+
+    Write-Host "Ensuring application user '$ApplicationId' exists in '$EnvironmentUrl'..." -ForegroundColor DarkGray
+
+    $conn = Get-DataverseConnection -Url $EnvironmentUrl -AccessToken { 
+        param($resource)
+        if (-not $resource) { $resource = 'https://globaldisco.crm.dynamics.com/' }
+        try {
+            $uri = [System.Uri]$resource
+            $resource = $uri.GetLeftPart([System.UriPartial]::Authority)
+        } catch {}
+        $auth = Get-AuthToken -ResourceUrl $resource
+        return $auth.AccessToken
+    }
+
+    if (-not $conn) {
+        throw "Failed to connect to Dataverse."
+    }
+
+    # 1. Get Root Business Unit
+    $rootBu = Get-DataverseRecord -Connection $conn -TableName "businessunit" -FilterValues @{ parentbusinessunitid = $null } -Columns "businessunitid" | Select-Object -First 1
+    if (-not $rootBu) { throw "Could not find root business unit." }
+    $rootBuId = $rootBu.businessunitid
+
+    # 2. Get System Administrator Role
+    $roleName = "System Administrator"
+    $role = Get-DataverseRecord -Connection $conn -TableName "role" -FilterValues @{ name = $roleName; businessunitid = $rootBuId } -Columns "roleid" | Select-Object -First 1
+    if (-not $role) { throw "Could not find '$roleName' role in root business unit." }
+    $roleId = $role.roleid
+
+    # 3. Check/Create System User
+    $user = Get-DataverseRecord -Connection $conn -TableName "systemuser" -FilterValues @{ applicationid = $ApplicationId } -Columns "systemuserid" | Select-Object -First 1
+    $userId = $null
+
+    if ($user) {
+        Write-Host "User already exists. ID: $($user.systemuserid)"
+        $userId = $user.systemuserid
+    }
+    else {
+        Write-Host "Creating application user..."
+        $userAttributes = @{
+            "applicationid" = $ApplicationId
+            "businessunitid" = $rootBuId
+        }
+        $createdUser = $userAttributes | Set-DataverseRecord -Connection $conn -TableName "systemuser" -CreateOnly -PassThru
+        $userId = $createdUser.Id
+        Write-Host "User created. ID: $userId"
+    }
+
+    # 4. Associate User with Role
+    $existingAssociation = Get-DataverseRecord -Connection $conn -TableName "systemuserroles" -FilterValues @{ systemuserid = $userId; roleid = $roleId } -Top 1
+    if (-not $existingAssociation) {
+        Write-Host "Associating user with '$roleName' role..."
+        @{
+            systemuserid = $userId
+            roleid = $roleId
+        } | Set-DataverseRecord -Connection $conn -TableName "systemuserroles" -CreateOnly
+        Write-Host "Association successful."
+    }
+    else {
+        Write-Host "User is already associated with '$roleName' role."
+    }
+}
+
+function Get-ExistingEnvironmentsFromRepo {
+    param(
+        [Parameter(Mandatory)][object]$MainRepo,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+    
+    if (-not $MainRepo.remoteUrl) { return @() }
+
+    $cloneRoot = Join-Path $env:TEMP ("ALM4Dataverse-EnvRead-" + [guid]::NewGuid().ToString('n'))
+    New-Item -ItemType Directory -Path $cloneRoot -Force | Out-Null
+
+    try {
+        Write-Host "Checking existing environments in '$($MainRepo.Name)'..." -ForegroundColor DarkGray
+        & git -c "http.extraheader=AUTHORIZATION: bearer $AccessToken" clone --depth 1 $MainRepo.remoteUrl $cloneRoot 2>&1 | Out-Null
+        
+        if ($LASTEXITCODE -ne 0) { return @() }
+
+        $branch = 'main'
+        if ($MainRepo.defaultBranch) {
+            $branch = ConvertFrom-GitRefToBranchName -Ref $MainRepo.defaultBranch
+        }
+        $deployYamlName = "DEPLOY-$branch.yml"
+
+        $deployPath = Join-Path $cloneRoot "pipelines\$deployYamlName"
+        if (Test-Path $deployPath) {
+            $content = Get-Content -LiteralPath $deployPath -Raw
+            # Regex to find environmentName: value
+            $matches = [regex]::Matches($content, 'environmentName:\s*([^\s]+)')
+            $envs = @()
+            foreach ($m in $matches) {
+                $envs += $m.Groups[1].Value
+            }
+            return $envs
+        }
+        return @()
+    }
+    finally {
+        try { Remove-Item -LiteralPath $cloneRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+    }
+}
 
 function Get-DataverseEnvironmentsSelection {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$false)][string]$ExcludedUrl
+        [Parameter(Mandatory=$false)][string]$ExcludedUrl,
+        [Parameter()][object]$MainRepo,
+        [Parameter()][string]$AccessToken,
+        [Parameter()][string]$ProjectName
     )
 
     $selectedEnvironments = @()
+
+    # Pre-populate from MainRepo if provided
+    if ($MainRepo -and $AccessToken -and $ProjectName) {
+        $existingNames = @(Get-ExistingEnvironmentsFromRepo -MainRepo $MainRepo -AccessToken $AccessToken)
+        
+        if ($existingNames.Count -gt 0) {
+            Write-Host "Found $($existingNames.Count) environment(s) in DEPLOY-main.yml. Resolving details..." -ForegroundColor Cyan
+            
+            # Get Service Endpoints to resolve URLs
+            $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $ProjectName -ErrorAction SilentlyContinue)
+            
+            foreach ($name in $existingNames) {
+                $ep = $endpoints | Where-Object { $_.name -eq $name } | Select-Object -First 1
+                if ($ep -and $ep.url) {
+                    $selectedEnvironments += [pscustomobject]@{
+                        ShortName = $name
+                        FriendlyName = "$name (Existing)"
+                        Url = $ep.url
+                    }
+                }
+                else {
+                    Write-Warning "Environment '$name' found in pipeline but no matching Service Endpoint found. Skipping pre-population."
+                }
+            }
+        }
+    }
 
     while ($true) {
         Clear-Host
@@ -2120,10 +2767,37 @@ function Update-DeployPipelineInMainRepo {
             throw "Git checkout failed with exit code $LASTEXITCODE"
         }
 
-        $deployYamlPath = Join-Path $cloneRoot 'pipelines\DEPLOY-main.yml'
+        $deployYamlName = "DEPLOY-$branch.yml"
+        $deployYamlPath = Join-Path $cloneRoot "pipelines\$deployYamlName"
         if (-not (Test-Path $deployYamlPath)) {
-            throw "pipelines\DEPLOY-main.yml not found"
+            throw "pipelines\$deployYamlName not found"
         }
+
+        # Remove existing environment stages
+        $content = Get-Content -LiteralPath $deployYamlPath
+        $cleanedContent = @()
+        $i = 0
+        while ($i -lt $content.Count) {
+            $line = $content[$i]
+            if ($line.Trim() -eq "- template: pipelines/templates/stages/deploy-environment.yml@ALM4Dataverse") {
+                # Skip this line
+                $i++
+                # Skip parameters line if present
+                if ($i -lt $content.Count -and $content[$i].Trim() -eq "parameters:") {
+                    $i++
+                    # Skip environmentName line if present
+                    if ($i -lt $content.Count -and $content[$i].Trim().StartsWith("environmentName:")) {
+                        $i++
+                    }
+                }
+            }
+            else {
+                $cleanedContent += $line
+                $i++
+            }
+        }
+        
+        $cleanedContent | Set-Content -LiteralPath $deployYamlPath
 
         $newStages = "`n"
         foreach ($env in $Environments) {
@@ -2134,11 +2808,11 @@ function Update-DeployPipelineInMainRepo {
 
         Add-Content -LiteralPath $deployYamlPath -Value $newStages
 
-        & git add pipelines\DEPLOY-main.yml
+        & git add "pipelines\$deployYamlName"
         
         & git diff --cached --quiet
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "Committing DEPLOY-main.yml changes..." -ForegroundColor Yellow
+            Write-Host "Committing $deployYamlName changes..." -ForegroundColor Yellow
             
             & git config user.name "ALM4Dataverse Setup" 2>$null
             & git config user.email "setup@alm4dataverse.local" 2>$null
@@ -2150,7 +2824,7 @@ function Update-DeployPipelineInMainRepo {
             if ($LASTEXITCODE -ne 0) {
                 throw "Git push failed."
             }
-            Write-Host "DEPLOY-main.yml updated successfully."
+            Write-Host "$deployYamlName updated successfully."
         }
     }
     finally {
@@ -2164,7 +2838,7 @@ Write-Section "Selecting Dataverse solution(s) to manage"
 # Use the same access token from Azure DevOps setup
 # We don't need to pre-fetch the token here anymore, as Get-DataverseSolutionsSelection will handle it via the callback
 
-$result = Get-DataverseSolutionsSelection
+$result = Get-DataverseSolutionsSelection -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
 $solutions = $result.Solutions
 $devEnvUrl = $result.EnvironmentUrl
 
@@ -2177,21 +2851,102 @@ if ($solutions.Count -gt 0) {
 }
 
 Write-Section "Selecting Deployment Environments"
-$environments = Get-DataverseEnvironmentsSelection -ExcludedUrl $devEnvUrl
+
+write-host "Select Dataverse environments to deploy to in the required order" -ForegroundColor Green
+
+$environments = Get-DataverseEnvironmentsSelection -ExcludedUrl $devEnvUrl -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken -ProjectName $selectedProject.Name
 
 if ($environments.Count -gt 0) {
     Update-DeployPipelineInMainRepo -Environments $environments -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
 
-    foreach ($env in $environments) {
-        [void](Ensure-AzDoVariableGroupExists `
-            -Organization $orgName `
-            -Project $selectedProject.Name `
-            -ProjectId $selectedProject.Id `
-            -GroupName "Environment-$($env.ShortName)" `
-            -Variables @{
-            'CONNREF_example_uniquename' = 'connectionid'
-            'ENVVAR_example_uniquename'  = 'value'
-        })
+    # Get pipeline IDs for authorization
+    $pipelineFolder = "\\$($mainRepo.Name)"
+    $exportPipeline = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name | Where-Object { $_.name -eq 'EXPORT' -and $_.path -eq $pipelineFolder } | Select-Object -First 1
+    $deployPipeline = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name | Where-Object { $_.name -eq "DEPLOY-$mainRepoBranch" -and $_.path -eq $pipelineFolder } | Select-Object -First 1
+
+    if (-not $exportPipeline) { Write-Warning "EXPORT pipeline not found. Skipping authorization." }
+    if (-not $deployPipeline) { Write-Warning "DEPLOY-$mainRepoBranch pipeline not found. Skipping authorization." }
+
+    $credentialsCache = @()
+
+    # Add Dev environment to the list of environments to configure service connection for
+    $allEnvs = @()
+    $allEnvs += [pscustomobject]@{
+        ShortName = "Dev-main"
+        Url = $devEnvUrl
+    }
+    $allEnvs += $environments
+
+    foreach ($env in $allEnvs) {
+        Write-Host "Configuring Service Connection for environment '$($env.ShortName)'..." -ForegroundColor Cyan
+        
+        $creds = Get-PowerPlatformSCCredentials -ExistingCredentials $credentialsCache -TenantId $adoAuthResult.TenantId -ProjectName $selectedProject.Name -EnvironmentName $env.ShortName
+        if ($credentialsCache -notcontains $creds) {
+            $credentialsCache += $creds
+        }
+        
+        $endpoint = $null
+        if (-not $creds.IsExistingServiceConnection) {
+            $endpoint = Ensure-AzDoServiceEndpoint `
+                -ProjectName $selectedProject.Name `
+                -ServiceEndpointName $env.ShortName `
+                -EnvironmentUrl $env.Url `
+                -ApplicationId $creds.ApplicationId `
+                -ClientSecret $creds.ClientSecret `
+                -TenantId $creds.TenantId
+        } else {
+             # If it is existing, we need to fetch it to get the ID
+             $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $selectedProject.Name -ErrorAction SilentlyContinue)
+             $endpoint = $endpoints | Where-Object { $_.name -eq $env.ShortName } | Select-Object -First 1
+        }
+
+        # Authorize pipeline for Service Connection
+        if ($endpoint -and $endpoint.id) {
+            if ($env.ShortName -eq "Dev-main") {
+                if ($exportPipeline) {
+                    Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'endpoint' -ResourceId $endpoint.id -PipelineId $exportPipeline.id
+                }
+            } else {
+                if ($deployPipeline) {
+                    Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'endpoint' -ResourceId $endpoint.id -PipelineId $deployPipeline.id
+                }
+            }
+        }
+
+        Ensure-DataverseApplicationUser `
+            -EnvironmentUrl $env.Url `
+            -ApplicationId $creds.ApplicationId `
+            -TenantId $creds.TenantId
+
+        $varGroup = $null
+        # Variable group for Dev is already created earlier, but we ensure it exists for others
+        if ($env.ShortName -ne "Dev-main") {
+            $varGroup = Ensure-AzDoVariableGroupExists `
+                -Organization $orgName `
+                -Project $selectedProject.Name `
+                -ProjectId $selectedProject.Id `
+                -GroupName "Environment-$($env.ShortName)" `
+                -Variables @{
+                'CONNREF_example_uniquename' = 'connectionid'
+                'ENVVAR_example_uniquename'  = 'value'
+            }
+        } else {
+            # Fetch Dev variable group
+            $varGroup = Get-VSTeamVariableGroup -ProjectName $selectedProject.Name -Name "Environment-Dev-main" -ErrorAction SilentlyContinue
+        }
+
+        # Authorize pipeline for Variable Group
+        if ($varGroup -and $varGroup.id) {
+             if ($env.ShortName -eq "Dev-main") {
+                if ($exportPipeline) {
+                    Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'variablegroup' -ResourceId $varGroup.id -PipelineId $exportPipeline.id
+                }
+            } else {
+                if ($deployPipeline) {
+                    Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'variablegroup' -ResourceId $varGroup.id -PipelineId $deployPipeline.id
+                }
+            }
+        }
     }
 }
 
@@ -2199,6 +2954,9 @@ if ($environments.Count -gt 0) {
 
 Clear-Host
 Write-Host "Setup completed successfully!" -ForegroundColor Green
+Write-Host ""
+Write-Host "Access your Azure DevOps project at" -ForegroundColor Green
+Write-Host "https://dev.azure.com/$orgName/$($selectedProject.Name)/_build" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Green
 Write-Host "https://github.com/rnwood/ALM4Dataverse/tree/stable#getting-started" -ForegroundColor Green
