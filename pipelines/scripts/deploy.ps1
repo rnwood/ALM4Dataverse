@@ -118,6 +118,7 @@ foreach ($solution in $solutions) {
 }
 
 # Activate workflows/flows
+[array]::Reverse($solutions)
 Write-Host "##[section]Activating Processes"
 
 foreach ($solution in $solutions) {
