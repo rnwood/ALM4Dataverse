@@ -53,6 +53,6 @@
     # Key = module name, 
     # Value = version ('' = latest stable version, 'prerelease' = latest prerelease, or specific version).
     scriptDependencies = @{
-        'Rnwood.Dataverse.Data.PowerShell' = '2.12.1'
+        'Rnwood.Dataverse.Data.PowerShell' = '2.14.2'
     }
 }
