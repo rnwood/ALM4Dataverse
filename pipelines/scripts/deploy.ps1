@@ -136,7 +136,8 @@ foreach ($solution in $solutions) {
     else {
         $serviceAccountUpnKey = 'ServiceAccountUpn'
     }
-    $serviceAccountUpn = get-content env:$serviceAccountUpnKey -erroraction silentlycontinue
+    $serviceAccountUpnKey = serviceAccountUpnKey.ToUpper()
+    $serviceAccountUpn = get-content env:$serviceAccountUpnKey -erroraction continue
     if ([string]::IsNullOrEmpty($serviceAccountUpn)) {
         Write-Host "##[error]Service account UPN not specified in environment variable '$serviceAccountUpnKey'."
         throw "Service account UPN not specified."
