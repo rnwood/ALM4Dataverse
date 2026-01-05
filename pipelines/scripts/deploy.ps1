@@ -118,16 +118,64 @@ foreach ($solution in $solutions) {
 }
 
 # Activate workflows/flows
+[array]::Reverse($solutions)
 Write-Host "##[section]Activating Processes"
+
 foreach ($solution in $solutions) {
     Write-Host "##[group]Activating processes for solution: $($solution.Name)"
+
+    if ($solution.PSObject.Properties.Name -contains 'serviceAccountUpnConfigKey' -and $solution.serviceAccountUpnConfigKey) {
+        $serviceAccountUpnKey = $solution.serviceAccountUpnConfigKey
+    }
+    else {
+        $serviceAccountUpnKey = 'ServiceAccountUpn'
+    }
+    $serviceAccountUpnKey = $serviceAccountUpnKey.ToUpper()
+    [string] $serviceAccountUpn = get-content env:$serviceAccountUpnKey -erroraction continue
+    if ([string]::IsNullOrEmpty($serviceAccountUpn)) {
+        Write-Host "##[error]Service account UPN not specified in environment variable '$serviceAccountUpnKey'."
+        throw "Service account UPN not specified."
+    } else {
+        Write-Host "##[debug]Using service account UPN from environment variable '$serviceAccountUpnKey': $serviceAccountUpn"
+    }
+
+    $serviceAccountUser = Get-DataverseRecord -tablename systemuser -filtervalues @{domainname = $serviceAccountUpn}
+
+    if ($null -eq $serviceAccountUser) {
+        Write-Host "##[error]Service account user with UPN '$serviceAccountUpn' not found in Dataverse."
+        throw "Service account user not found."
+    } else {
+        Write-Host "##[debug]Found service account user: $($serviceAccountUser.fullname) (ID: $($serviceAccountUser.Id))"
+    }
+
     $processes = Get-DataverseRecord -TableName workflow `
-        -FilterValues @{statecode = 0; "solution.uniquename" = "$($solution.Name)" } `
+        -FilterValues @{"and" = @(
+                @{"solution.uniquename" = "$($solution.Name)"}
+                @{"or" = @(
+                    @{ "statecode:NotEqual" = 1 } # Not Activated
+                    @{ "ownerid:NotEqual" = $serviceAccountUser.Id } # Activated
+                )}
+             )
+        } `
         -Links @{"workflow.solutionid" = "solution.solutionid" } `
         -Columns name, workflowid
 
     if ($processes.Count -gt 0) {
         foreach ($process in $processes) {
+            if ($process.ownerid -ne $serviceAccountUser.Id) {
+                Write-Host "Reassigning process: $($process.name) to service account user: $($serviceAccountUser.fullname)"
+                
+                Set-DataverseRecord `
+                    -TableName workflow `
+                    -Id $process.workflowid `
+                    -InputObject @{statecode = 0; statuscode = 1; }
+                    
+                Set-DataverseRecord `
+                    -TableName workflow `
+                    -Id $process.workflowid `
+                    -InputObject @{ownerid = $serviceAccountUser.Id}
+            }
+
             Write-Host "Activating process: $($process.name)"
             Set-DataverseRecord `
                 -TableName workflow `
