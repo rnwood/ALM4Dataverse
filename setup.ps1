@@ -2057,6 +2057,67 @@ function Get-PowerPlatformSCCredentials {
     }
 }
 
+function Get-DataverseServiceAccountUPN {
+    [CmdletBinding()]
+    param(
+        [Parameter()][array]$ExistingServiceAccounts,
+        [Parameter()][string]$EnvironmentName,
+        [Parameter()][string]$ExistingValue
+    )
+
+    # Build Menu
+    $menuItems = @()
+    $menuActions = @() # To track what each item does
+
+    # Priority 1: Existing value from variable group (if provided)
+    if (-not [string]::IsNullOrWhiteSpace($ExistingValue)) {
+        $menuItems += "Use existing: $ExistingValue"
+        $menuActions += @{ Type = 'Existing'; UPN = $ExistingValue }
+    }
+
+    # Standard Options
+    $menuItems += "Enter a new service account UPN"
+    $menuActions += @{ Type = 'Manual' }
+
+    # Cached Service Accounts (exclude the existing value to avoid duplication)
+    foreach ($sa in $ExistingServiceAccounts) {
+        if ($sa -ne $ExistingValue) {
+            $menuItems += "Reuse: $sa"
+            $menuActions += @{ Type = 'Cached'; UPN = $sa }
+        }
+    }
+
+    # Show Menu
+    $selection = Select-FromMenu -Title "Select Dataverse Service Account for '$EnvironmentName'" -Items $menuItems
+    if ($null -eq $selection) { throw "No service account selected." }
+
+    $action = $menuActions[$selection]
+
+    if ($action.Type -eq 'Cached' -or $action.Type -eq 'Existing') {
+        return $action.UPN
+    }
+    else { # Manual
+        Write-Host ""
+        Write-Host "IMPORTANT: The service account must be licenced with an appropriate Dataverse/Power Platform licence." -ForegroundColor Yellow
+        Write-Host ""
+        
+        while ($true) {
+            $upn = Read-Host "Service Account UPN (e.g., serviceaccount@contoso.com)"
+            if ([string]::IsNullOrWhiteSpace($upn)) {
+                Write-Warning "Service Account UPN cannot be empty. Please try again."
+                continue
+            }
+            # Basic email format validation
+            if ($upn -match '^[^@]+@[^@]+\.[^@]+$') {
+                return $upn
+            }
+            else {
+                Write-Warning "The UPN does not appear to be in a valid email format. Please try again."
+            }
+        }
+    }
+}
+
 function Ensure-AzDoVariableGroupExists {
     [CmdletBinding()]
     param(
@@ -2115,6 +2176,50 @@ function Ensure-AzDoVariableGroupExists {
     }
 
     return $group
+}
+
+function Update-AzDoVariableGroup {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectName,
+        [Parameter(Mandatory)][string]$GroupName,
+        [Parameter(Mandatory)][hashtable]$Variables
+    )
+
+    try {
+        $group = Get-VSTeamVariableGroup -ProjectName $ProjectName -Name $GroupName -ErrorAction SilentlyContinue
+        if (-not $group) {
+            Write-Warning "Variable group '$GroupName' not found. Cannot update."
+            return $null
+        }
+
+        Write-Host "Updating variable group '$GroupName'..." -ForegroundColor DarkGray
+
+        # Build variables payload in the format expected by Update-VSTeamVariableGroup
+        $variablesPayload = @{}
+        
+        # First, copy existing variables if the group has any
+        if ($group.variables) {
+            foreach ($key in $group.variables.PSObject.Properties.Name) {
+                $variablesPayload[$key] = @{ value = $group.variables.$key.value }
+            }
+        }
+
+        # Then add/update with new variables
+        foreach ($k in $Variables.Keys) {
+            $variablesPayload[$k] = @{ value = [string]$Variables[$k] }
+        }
+
+        # Use VSTeam command to update variable group
+        Update-VSTeamVariableGroup -ProjectName $ProjectName -Id $group.id -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description $group.description
+
+        Write-Host "Variable group '$GroupName' updated successfully."
+        return $group
+    }
+    catch {
+        Write-Warning "Failed to update variable group '$GroupName': $($_.Exception.Message)"
+        return $null
+    }
 }
 
 Write-Section "Ensuring main repository contains pipeline YAMLs"
@@ -2581,6 +2686,73 @@ function Ensure-DataverseApplicationUser {
     }
 }
 
+function Ensure-DataverseServiceAccountUser {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentUrl,
+        [Parameter(Mandatory)][string]$ServiceAccountUPN,
+        [Parameter(Mandatory)][string]$TenantId
+    )
+
+    Write-Host "Ensuring service account '$ServiceAccountUPN' has System Administrator role in '$EnvironmentUrl'..." -ForegroundColor DarkGray
+
+    $conn = Get-DataverseConnection -Url $EnvironmentUrl -AccessToken { 
+        param($resource)
+        if (-not $resource) { $resource = 'https://globaldisco.crm.dynamics.com/' }
+        try {
+            $uri = [System.Uri]$resource
+            $resource = $uri.GetLeftPart([System.UriPartial]::Authority)
+        } catch {}
+        $auth = Get-AuthToken -ResourceUrl $resource
+        return $auth.AccessToken
+    }
+
+    if (-not $conn) {
+        throw "Failed to connect to Dataverse."
+    }
+
+    # 1. Get Root Business Unit
+    $rootBu = Get-DataverseRecord -Connection $conn -TableName "businessunit" -FilterValues @{ parentbusinessunitid = $null } -Columns "businessunitid" | Select-Object -First 1
+    if (-not $rootBu) { throw "Could not find root business unit." }
+    $rootBuId = $rootBu.businessunitid
+
+    # 2. Get System Administrator Role
+    $roleName = "System Administrator"
+    $role = Get-DataverseRecord -Connection $conn -TableName "role" -FilterValues @{ name = $roleName; businessunitid = $rootBuId } -Columns "roleid" | Select-Object -First 1
+    if (-not $role) { throw "Could not find '$roleName' role in root business unit." }
+    $roleId = $role.roleid
+
+    # 3. Find the System User by UPN
+    $user = Get-DataverseRecord -Connection $conn -TableName "systemuser" -FilterValues @{ 
+        domainname = $ServiceAccountUPN
+        isdisabled = $false
+    } -Columns "systemuserid","fullname" | Select-Object -First 1
+    
+    if (-not $user) {
+        Write-Warning "Service account user '$ServiceAccountUPN' not found in Dataverse environment '$EnvironmentUrl'."
+        Write-Warning "Please ensure the user exists and is enabled in this environment before proceeding."
+        Write-Warning "The user may need to be added manually or may need to sign in to the environment at least once."
+        return
+    }
+    
+    $userId = $user.systemuserid
+    Write-Host "Found service account user: $($user.fullname) (ID: $userId)"
+
+    # 4. Associate User with Role
+    $existingAssociation = Get-DataverseRecord -Connection $conn -TableName "systemuserroles" -FilterValues @{ systemuserid = $userId; roleid = $roleId } -Top 1
+    if (-not $existingAssociation) {
+        Write-Host "Associating service account with '$roleName' role..."
+        @{
+            systemuserid = $userId
+            roleid = $roleId
+        } | Set-DataverseRecord -Connection $conn -TableName "systemuserroles" -CreateOnly
+        Write-Host "Association successful."
+    }
+    else {
+        Write-Host "Service account is already associated with '$roleName' role."
+    }
+}
+
 function Get-ExistingEnvironmentsFromRepo {
     param(
         [Parameter(Mandatory)][object]$MainRepo,
@@ -2894,6 +3066,7 @@ if ($environments.Count -gt 0) {
     if (-not $deployPipeline) { Write-Warning "DEPLOY-$mainRepoBranch pipeline not found. Skipping authorization." }
 
     $credentialsCache = @()
+    $serviceAccountsCache = @()
 
     # Add Dev environment to the list of environments to configure service connection for
     $allEnvs = @()
@@ -2909,6 +3082,25 @@ if ($environments.Count -gt 0) {
         $creds = Get-PowerPlatformSCCredentials -ExistingCredentials $credentialsCache -TenantId $adoAuthResult.TenantId -ProjectName $selectedProject.Name -EnvironmentName $env.ShortName
         if ($credentialsCache -notcontains $creds) {
             $credentialsCache += $creds
+        }
+
+        # Check for existing service account UPN in variable group
+        $existingServiceAccountUPN = $null
+        try {
+            $existingVarGroup = Get-VSTeamVariableGroup -ProjectName $selectedProject.Name -Name "Environment-$($env.ShortName)" -ErrorAction SilentlyContinue
+            if ($existingVarGroup -and $existingVarGroup.variables -and $existingVarGroup.variables.PSObject.Properties.Name -contains 'DataverseServiceAccountUPN') {
+                $existingServiceAccountUPN = $existingVarGroup.variables.DataverseServiceAccountUPN.value
+            }
+        }
+        catch {
+            # Ignore errors checking for existing value
+        }
+
+        # Get Service Account UPN
+        Write-Host "Configuring Service Account for environment '$($env.ShortName)'..." -ForegroundColor Cyan
+        $serviceAccountUPN = Get-DataverseServiceAccountUPN -ExistingServiceAccounts $serviceAccountsCache -EnvironmentName $env.ShortName -ExistingValue $existingServiceAccountUPN
+        if ($serviceAccountsCache -notcontains $serviceAccountUPN) {
+            $serviceAccountsCache += $serviceAccountUPN
         }
         
         $endpoint = $null
@@ -2953,6 +3145,12 @@ if ($environments.Count -gt 0) {
             -ApplicationId $creds.ApplicationId `
             -TenantId $creds.TenantId
 
+        # Ensure Service Account has System Administrator role
+        Ensure-DataverseServiceAccountUser `
+            -EnvironmentUrl $env.Url `
+            -ServiceAccountUPN $serviceAccountUPN `
+            -TenantId $creds.TenantId
+
         $varGroup = $null
         # Variable group for Dev is already created earlier, but we ensure it exists for others
         if ($env.ShortName -ne "Dev-main") {
@@ -2964,10 +3162,16 @@ if ($environments.Count -gt 0) {
                 -Variables @{
                 'CONNREF_example_uniquename' = 'connectionid'
                 'ENVVAR_example_uniquename'  = 'value'
+                'DataverseServiceAccountUPN' = $serviceAccountUPN
             }
         } else {
-            # Fetch Dev variable group
+            # Fetch and update Dev variable group with service account UPN
             $varGroup = Get-VSTeamVariableGroup -ProjectName $selectedProject.Name -Name "Environment-Dev-main" -ErrorAction SilentlyContinue
+            if ($varGroup) {
+                Update-AzDoVariableGroup -ProjectName $selectedProject.Name -GroupName "Environment-Dev-main" -Variables @{
+                    'DataverseServiceAccountUPN' = $serviceAccountUPN
+                }
+            }
         }
 
         # Authorize pipeline for Variable Group
