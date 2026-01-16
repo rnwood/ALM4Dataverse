@@ -1,8 +1,21 @@
 @{
     # ALM for Dataverse configuration
     #
-    # Paths in this file are relative to the repository root when running locally,
-    # and relative to the artifact root when running in pipelines.
+    # Paths in this file are relative to the directory this file is in (the repo root).
+    #
+    # FORK CONFIGURATION:
+    # To customize this configuration in a fork, create a fork-almconfig.psd1 file
+    # in the ALM4Dataverse repository root.
+    # Fork configuration is merged with this file (this file's values take precedence).
+    # Arrays are concatenated, hashtables are merged.
+    # This allows forks to add custom defaults without modifying this template.
+    #
+    # HOOK SCRIPT PATHS AND [ALM] REPLACEMENT:
+    # Hook script paths can use the [alm] placeholder to reference the ALM4Dataverse
+    # repository root. For example:
+    #   '[alm]/custom-hooks/myScript.ps1' -> executes the script from the fork's copy of ALM4Dataverse
+    # This is useful for running custom hook scripts provided by the ALM4Dataverse fork.
+    # The placeholder is replaced with the absolute path to the ALM repo root before execution.
 
     # Solutions to process, in dependency order.
     # Each entry is a hashtable with keys
@@ -24,6 +37,29 @@
     #
     # Each hook is a list of script paths (relative to repo/artifact root).
     # Hooks are optional; leave them empty (@()) when not needed.
+    #
+    # Hook scripts receive a -Context parameter with a hashtable containing:
+    # - HookType: the type of hook being executed
+    # - BaseDirectory: the base directory for the hook (source or artifacts root)
+    # - Config: the loaded alm-config.psd1 configuration
+    # - Additional context specific to the hook type (see details below)
+    #
+    # Hook-specific context:
+    #
+    # preBuild, postBuild:
+    #   - SourceDirectory: path to the source directory
+    #   - ArtifactStagingDirectory: path to the artifact staging directory
+    #
+    # preExport, postExport:
+    #   - SourceDirectory: path to the source directory
+    #   - ArtifactStagingDirectory: path to the artifact staging directory
+    #   - TempDirectory: path to temporary directory for export operations
+    #   - EnvironmentName: name of the Dataverse environment being exported from
+    #
+    # preDeploy, dataMigrations, postDeploy:
+    #   - ArtifactsPath: path to the artifacts directory
+    #   - UseUnmanagedSolutions: boolean indicating if unmanaged solutions are being deployed
+    #
     hooks = @{
         # Called by `pipelines/scripts/export.ps1` before exporting solutions.
         preExport  = @()

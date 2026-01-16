@@ -33,7 +33,10 @@ Write-Host "##[section]Building Artifacts"
 $config = Get-AlmConfig -BaseDirectory $SourceDirectory
 Write-Host "##[debug]Loaded configuration from alm-config.psd1"
 
-Invoke-Hooks -HookType "preBuild" -BaseDirectory $SourceDirectory -Config $config
+Invoke-Hooks -HookType "preBuild" -BaseDirectory $SourceDirectory -Config $config -AdditionalContext @{
+    SourceDirectory = $SourceDirectory
+    ArtifactStagingDirectory = $ArtifactStagingDirectory
+}
 
 foreach ($solution in $config.solutions) {
     $solutionName = $solution.name
@@ -95,4 +98,7 @@ Write-Host "##[endgroup]"
 
 Write-Host "##[section]Build completed successfully!"
 
-Invoke-Hooks -HookType "postBuild" -BaseDirectory $SourceDirectory -Config $config
+Invoke-Hooks -HookType "postBuild" -BaseDirectory $SourceDirectory -Config $config -AdditionalContext @{
+    SourceDirectory = $SourceDirectory
+    ArtifactStagingDirectory = $ArtifactStagingDirectory
+}

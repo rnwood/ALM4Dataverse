@@ -37,7 +37,12 @@ Write-Host "##[section]Exporting Solutions from $EnvironmentName"
 $solutionsConfig = Get-AlmConfig -BaseDirectory $SourceDirectory
 Write-Host "##[debug]Loaded configuration from alm-config.psd1"
 
-Invoke-Hooks -HookType "preExport" -BaseDirectory $SourceDirectory -Config $solutionsConfig
+Invoke-Hooks -HookType "preExport" -BaseDirectory $SourceDirectory -Config $solutionsConfig -AdditionalContext @{
+    SourceDirectory = $SourceDirectory
+    ArtifactStagingDirectory = $ArtifactStagingDirectory
+    TempDirectory = $TempDirectory
+    EnvironmentName = $EnvironmentName
+}
 
 foreach ($solution in $solutionsConfig.solutions) {
     $solutionName = $solution.name
@@ -111,6 +116,11 @@ foreach ($solution in $solutionsConfig.solutions) {
     Write-Host "##[endgroup]"
 }
 
-Invoke-Hooks -HookType "postExport" -BaseDirectory $SourceDirectory -Config $solutionsConfig
+Invoke-Hooks -HookType "postExport" -BaseDirectory $SourceDirectory -Config $solutionsConfig -AdditionalContext @{
+    SourceDirectory = $SourceDirectory
+    ArtifactStagingDirectory = $ArtifactStagingDirectory
+    TempDirectory = $TempDirectory
+    EnvironmentName = $EnvironmentName
+}
 
 Write-Host "##[section]Export completed successfully!"
