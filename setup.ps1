@@ -2098,7 +2098,7 @@ function Get-DataverseServiceAccountUPN {
     }
     else { # Manual
         Write-Host ""
-        Write-Host "IMPORTANT: The service account must be licenced with an appropriate Dataverse/Power Platform licence." -ForegroundColor Yellow
+        Write-Host "IMPORTANT: The service account must be licenced with an appropriate D365/PowerApps/etc licence for your use-case." -ForegroundColor Yellow
         Write-Host ""
         
         while ($true) {
@@ -2107,12 +2107,12 @@ function Get-DataverseServiceAccountUPN {
                 Write-Warning "Service Account UPN cannot be empty. Please try again."
                 continue
             }
-            # Basic email format validation
+            # Basic UPN format validation
             if ($upn -match '^[^@]+@[^@]+\.[^@]+$') {
                 return $upn
             }
             else {
-                Write-Warning "The UPN does not appear to be in a valid email format. Please try again."
+                Write-Warning "The UPN does not appear to be in a valid UPN format. Please try again."
             }
         }
     }
@@ -2728,15 +2728,24 @@ function Ensure-DataverseServiceAccountUser {
         isdisabled = $false
     } -Columns "systemuserid","fullname" | Select-Object -First 1
     
-    if (-not $user) {
-        Write-Warning "Service account user '$ServiceAccountUPN' not found in Dataverse environment '$EnvironmentUrl'."
-        Write-Warning "Please ensure the user exists and is enabled in this environment before proceeding."
-        Write-Warning "The user may need to be added manually or may need to sign in to the environment at least once."
-        return
+    $userId = $null
+    if ($user) {
+        $userId = $user.systemuserid
+        Write-Host "Found service account user: $($user.fullname) (ID: $userId)"
     }
-    
-    $userId = $user.systemuserid
-    Write-Host "Found service account user: $($user.fullname) (ID: $userId)"
+    else {
+        Write-Host "Service account user '$ServiceAccountUPN' not found. Creating..."
+        $userAttributes = @{
+            "domainname" = $ServiceAccountUPN
+            "businessunitid" = $rootBuId
+            "internalemailaddress" = $ServiceAccountUPN,
+            "firstname" = "Service",
+            "lastname" = "Account"
+        }
+        $createdUser = $userAttributes | Set-DataverseRecord -Connection $conn -TableName "systemuser" -CreateOnly -PassThru
+        $userId = $createdUser.Id
+        Write-Host "Service account user created. ID: $userId"
+    }
 
     # 4. Associate User with Role
     $existingAssociation = Get-DataverseRecord -Connection $conn -TableName "systemuserroles" -FilterValues @{ systemuserid = $userId; roleid = $roleId } -Top 1
