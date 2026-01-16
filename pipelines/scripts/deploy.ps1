@@ -128,7 +128,7 @@ foreach ($solution in $solutions) {
         $serviceAccountUpnKey = $solution.serviceAccountUpnConfigKey
     }
     else {
-        $serviceAccountUpnKey = 'ServiceAccountUpn'
+        $serviceAccountUpnKey = 'DataverseServiceAccountUpn'
     }
     $serviceAccountUpnKey = $serviceAccountUpnKey.ToUpper()
     [string] $serviceAccountUpn = get-content env:$serviceAccountUpnKey -erroraction continue
