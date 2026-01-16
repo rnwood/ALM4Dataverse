@@ -3160,8 +3160,8 @@ if ($environments.Count -gt 0) {
                 -ProjectId $selectedProject.Id `
                 -GroupName "Environment-$($env.ShortName)" `
                 -Variables @{
-                'CONNREF_example_uniquename' = 'connectionid'
-                'ENVVAR_example_uniquename'  = 'value'
+                'DATAVERSECONNREF_example_uniquename' = 'connectionid'
+                'DATAVERSEENVVAR_example_uniquename'  = 'value'
                 'DataverseServiceAccountUPN' = $serviceAccountUPN
             }
         } else {
