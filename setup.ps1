@@ -2129,8 +2129,8 @@ Write-Section "Ensuring environment variable group"
         -ProjectId $selectedProject.Id `
         -GroupName 'Environment-Dev-main' `
         -Variables @{
-        'CONNREF_example_uniquename' = 'connectionid'
-        'ENVVAR_example_uniquename'  = 'value'
+        'DATAVERSECONNREF_example_uniquename' = 'connectionid'
+        'DATAVERSEENVVAR_example_uniquename'  = 'value'
     })
 
 $mainRepo = Select-AzDoMainRepository -ProjectName $selectedProject.Name -SharedRepositoryName $sharedRepoName
