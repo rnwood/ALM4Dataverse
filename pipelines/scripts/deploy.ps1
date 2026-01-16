@@ -59,17 +59,17 @@ foreach ($solutionConfig in $solutionsConfig.solutions) {
 }
 $connectionReferences = @{}
 
-# Find all env vars prefixed with "ConnRef_" to set as connection references
-Get-ChildItem Env: | Where-Object { $_.Name -like "ConnRef_*" } | ForEach-Object {
-    $connRefName = $_.Name.Substring(8) # Remove "ConnRef_" prefix
+# Find all env vars prefixed with "DataverseConnRef_" to set as connection references
+Get-ChildItem Env: | Where-Object { $_.Name -like "DataverseConnRef_*" } | ForEach-Object {
+    $connRefName = $_.Name.Substring(17) # Remove "DataverseConnRef_" prefix
     $connectionReferences[$connRefName] = $_.Value
 }
 
 $environmentVariables = @{}
 
-# Find all env vars prefixed with "EnvVar_" to set as environment variables
-Get-ChildItem Env: | Where-Object { $_.Name -like "EnvVar_*" } | ForEach-Object {
-    $envVarName = $_.Name.Substring(7) # Remove "EnvVar_" prefix
+# Find all env vars prefixed with "DataverseEnvVar_" to set as environment variables
+Get-ChildItem Env: | Where-Object { $_.Name -like "DataverseEnvVar_*" } | ForEach-Object {
+    $envVarName = $_.Name.Substring(16) # Remove "DataverseEnvVar_" prefix
     $environmentVariables[$envVarName] = $_.Value
 }
 
@@ -134,7 +134,7 @@ foreach ($solution in $solutions) {
         $serviceAccountUpnKey = $solution.serviceAccountUpnConfigKey
     }
     else {
-        $serviceAccountUpnKey = 'ServiceAccountUpn'
+        $serviceAccountUpnKey = 'DataverseServiceAccountUpn'
     }
     $serviceAccountUpnKey = $serviceAccountUpnKey.ToUpper()
     [string] $serviceAccountUpn = get-content env:$serviceAccountUpnKey -erroraction continue
