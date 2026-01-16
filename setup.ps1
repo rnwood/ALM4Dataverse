@@ -18,6 +18,8 @@ $ProgressPreference = 'SilentlyContinue' # Suppress progress bars
 # This script is designed to be downloadable and self-contained.
 # It's therefore quite long, as it includes all necessary functions and logic.
 
+# Any changes must be also reflected in the docs/manual-setup.md file.
+
 #region Common Functions
 
 function Write-Section {

@@ -15,8 +15,42 @@ Features:
 - Supports including config/system/lookup data
 - Easy to extend using the extensive PowerShell ecosystem.
 
+
 ## Getting Started
 
-1) [Run the automated setup process](docs/automated-setup.md) to put in place the pipelines and other configuration needed.
+1) [Run the automated setup process](docs/setup/automated-setup.md) to put in place the pipelines and other configuration needed.
+    
 
-2) 
+## Documentation
+
+### Concepts
+
+Learn how ALM4Dataverse works:
+
+- [Overview](docs/concepts/overview.md) - Architecture and key features
+- [Pipeline Lifecycle](docs/concepts/pipeline-lifecycle.md) - How changes flow through the system
+- [Solutions and Dependencies](docs/concepts/solutions-dependencies.md) - Managing multiple solutions
+- [Hooks and Extensibility](docs/concepts/hooks-extensibility.md) - Customizing pipeline behavior
+
+### Usage Guides
+
+Step-by-step guides for common tasks:
+
+- [Exporting Solutions](docs/usage/exporting-solutions.md) - Capture changes from dev to source control
+- [Building Solutions](docs/usage/building-solutions.md) - Create deployment artifacts
+- [Deploying Solutions](docs/usage/deploying-solutions.md) - Deploy to target environments
+- [Importing Solutions](docs/usage/importing-solutions.md) - Sync source control to dev environment
+- [Managing Configuration Data](docs/usage/managing-data.md) - Include data in deployments
+- [Branch Strategy](docs/usage/branch-strategy.md) - Team development patterns
+
+### Initial Setup
+
+- [Azure DevOps Organisation Requirements](docs/setup/azdo-organisation-requirements.md)
+- [Automated Setup](docs/setup/automated-setup.md)
+- [Manual Setup](docs/setup/manual-setup.md)
+
+### Configuration Reference
+
+- [ALM Configuration (alm-config.psd1)](docs/config/alm-config.md)
+- [Environment Variable Group](docs/config/environment-variable-group.md)
+- [Service Connection Configuration](docs/config/environment-service-connection.md)
