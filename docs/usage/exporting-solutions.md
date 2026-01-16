@@ -30,7 +30,7 @@ Run the EXPORT pipeline when you have:
 6. **Detect Changes**: Git compares exported files with existing source
 7. **Version Bump**: If changes detected, solution version is incremented
 8. **Post-Export Hooks**: Any `postExport` hooks run (e.g., data export)
-9. **Commit**: Changes are committed and pushed to the branch
+9. **Commit**: Changes are automatically committed to the repository by the pipeline
 
 ## Version Increment Logic
 
@@ -59,7 +59,7 @@ A variable group named `Environment-Dev-{branch}` should exist with any required
 
 The pipeline needs:
 - Access to the service connection
-- Contribute permission on the Git repository (to push commits)
+- Contribute permission on the Git repository (to commit changes)
 
 ## Exporting Configuration Data
 
@@ -157,4 +157,4 @@ The template handles:
 - Environment connection
 - Solution export and unpacking
 - Version management
-- Git commit and push
+- Automatic commit of changes

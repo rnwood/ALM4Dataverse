@@ -13,13 +13,7 @@ The BUILD pipeline triggers automatically:
 
 ### Automatic Trigger
 
-Simply commit and push changes to trigger a build:
-
-```bash
-git add .
-git commit -m "Add new workflow"
-git push
-```
+The BUILD pipeline triggers automatically when changes are committed to any branch. Typically, the EXPORT pipeline commits changes, but you can also commit files directly in Azure DevOps (Repos > Files).
 
 ### Manual Run
 
@@ -221,7 +215,7 @@ stages:
 
 ### 3. Don't Break the Build
 
-- Test changes locally before pushing
+- Review changes carefully before committing to the repository
 - Use feature branches for risky changes
 - Review exports before committing
 

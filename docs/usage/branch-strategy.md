@@ -56,11 +56,12 @@ develop (UAT)  ───●───●───●───●───●─�
 
 ### 1. Create the Branch
 
-```bash
-git checkout main
-git pull
-git checkout -b feature-new-workflow
-```
+In Azure DevOps:
+1. Go to **Repos** > **Branches**
+2. Click **New branch**
+3. Enter branch name: `feature-new-workflow`
+4. Base branch: `main`
+5. Click **Create**
 
 ### 2. Provision Development Environment
 
@@ -121,16 +122,16 @@ Normal workflow:
 
 ### 7. Merge to Main
 
-When feature is complete:
+When feature is complete, create a Pull Request:
 
-```bash
-git checkout main
-git pull
-git merge feature-new-workflow
-git push
-```
-
-Or use a Pull Request for review.
+1. Go to **Repos** > **Pull requests**
+2. Click **New pull request**
+3. Source branch: `feature-new-workflow`
+4. Target branch: `main`
+5. Add title and description
+6. Add reviewers
+7. Click **Create**
+8. After approval, complete the pull request
 
 ## Branch Naming Conventions
 
@@ -159,36 +160,30 @@ Resources are named dynamically based on branch:
 
 When your feature branch has no conflicts with main:
 
-```bash
-git checkout main
-git merge feature-x
-git push
-```
-
-Then run EXPORT from `main` to update the dev environment if needed.
+1. Create a Pull Request from `feature-x` to `main`
+2. Review the changes
+3. Complete the pull request to merge
+4. Run EXPORT from `main` to update the dev environment if needed
 
 ### Merge with Solution Conflicts
 
 If both branches modified the same solution components:
 
-1. Merge in Git (resolve file conflicts)
-2. The merge may result in invalid solution XML
-3. Import the merged source to a test environment
-4. Fix any issues
-5. Export clean solution back
+1. Create a Pull Request
+2. Resolve file conflicts in the Azure DevOps web editor or locally
+3. The merge may result in invalid solution XML
+4. Import the merged source to a test environment
+5. Fix any issues
+6. Export clean solution back
 
 ### Best Practice: Merge Often
 
-Merge main into your feature branch frequently:
+Merge main into your feature branch frequently to keep it up to date:
 
-```bash
-git checkout feature-x
-git merge main
-# Resolve conflicts if any
-git push
-```
-
-This reduces the size of conflicts at final merge.
+1. Go to **Repos** > **Pull requests**
+2. Create a Pull Request from `main` to `feature-x`
+3. Complete the merge (resolve conflicts if any)
+4. This reduces the size of conflicts at final merge
 
 ## Environment Management
 
@@ -253,19 +248,19 @@ When multiple developers share a dev environment:
 Dev-main (shared)
     │
     ├── Developer A: Make changes
-    ├── Developer A: EXPORT → commit → push
+    ├── Developer A: EXPORT (pipeline commits changes)
     │
-    ├── Developer B: git pull
+    ├── Developer B: View latest in Repos > Files
     ├── Developer B: IMPORT (sync environment)
     ├── Developer B: Make changes
-    └── Developer B: EXPORT → commit → push
+    └── Developer B: EXPORT (pipeline commits changes)
 ```
 
 ### Coordination Rules
 
 1. Communicate before exporting
-2. Pull and import before starting work
-3. Export frequently to avoid large change sets
+2. Run IMPORT before starting work to get latest changes
+3. Export frequently (via EXPORT pipeline) to avoid large change sets
 4. Don't work on same components simultaneously
 
 ## Release Branches
@@ -274,11 +269,11 @@ For long-term support of released versions:
 
 ### Creating a Release Branch
 
-```bash
-git checkout main
-git checkout -b release-1.0
-git push -u origin release-1.0
-```
+1. Go to **Repos** > **Branches**
+2. Click **New branch**
+3. Enter branch name: `release-1.0`
+4. Base branch: `main`
+5. Click **Create**
 
 ### Hotfix Process
 
@@ -306,7 +301,7 @@ Create scripts or pipelines to provision dev environments consistently.
 
 ### 3. Clean Up Regularly
 
-Delete old feature branches and their associated environments.
+Delete old feature branches (Repos > Branches) and their associated environments.
 
 ### 4. Use Consistent Naming
 

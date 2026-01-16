@@ -77,14 +77,14 @@ If your dev environment becomes corrupted:
 
 ### 3. Sync Team Changes
 
-After other team members export changes:
-1. Pull latest from Git
+After other team members export changes (via EXPORT pipeline):
+1. The changes will be visible in Azure DevOps (Repos > Files)
 2. Run IMPORT to get their changes in your environment
 
 ### 4. Feature Branch Setup
 
 When starting work on a feature branch:
-1. Create branch: `git checkout -b feature-x`
+1. Create branch in Azure DevOps (Repos > Branches > New branch)
 2. Set up new dev environment: `Dev-feature-x`
 3. Create service connection and variable group
 4. Run IMPORT to initialize the environment
@@ -159,7 +159,7 @@ If connection reference setup fails:
 
 Before starting development work, import to ensure you have the latest:
 ```
-Pull → Import → Develop → Export → Push
+View Latest (Repos) → Import → Develop → Export (commits automatically)
 ```
 
 ### 2. Use Consistent Environments
