@@ -37,7 +37,10 @@ Write-Host "##[section]Deploying "
 $solutionsConfig = Get-AlmConfig -BaseDirectory $ArtifactsPath
 Write-Host "##[debug]Loaded configuration from alm-config.psd1"
 
-Invoke-Hooks -HookType "preDeploy" -BaseDirectory $ArtifactsPath -Config $solutionsConfig
+Invoke-Hooks -HookType "preDeploy" -BaseDirectory $ArtifactsPath -Config $solutionsConfig -AdditionalContext @{
+    ArtifactsPath = $ArtifactsPath
+    UseUnmanagedSolutions = $UseUnmanagedSolutions
+}
 
 # Define solutions to deploy
 $solutions = @()
@@ -106,7 +109,10 @@ foreach ($solution in $solutions) {
 }
 
 
-Invoke-Hooks -HookType "dataMigrations" -BaseDirectory $ArtifactsPath -Config $solutionsConfig
+Invoke-Hooks -HookType "dataMigrations" -BaseDirectory $ArtifactsPath -Config $solutionsConfig -AdditionalContext @{
+    ArtifactsPath = $ArtifactsPath
+    UseUnmanagedSolutions = $UseUnmanagedSolutions
+}
 
 # Apply upgrades in reverse order (most dependent first)
 Write-Host "##[section]Applying solution upgrades"
@@ -194,6 +200,9 @@ Write-Host "##[endgroup]"
 Write-Host "##[section]Publishing Customizations"
 Publish-DataverseCustomizations
 
-Invoke-Hooks -HookType "postDeploy" -BaseDirectory $ArtifactsPath -Config $solutionsConfig
+Invoke-Hooks -HookType "postDeploy" -BaseDirectory $ArtifactsPath -Config $solutionsConfig -AdditionalContext @{
+    ArtifactsPath = $ArtifactsPath
+    UseUnmanagedSolutions = $UseUnmanagedSolutions
+}
 
 Write-Host "##[section]Deployment  completed successfully!"
