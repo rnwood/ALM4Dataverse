@@ -56,7 +56,7 @@ foreach ($solutionConfig in $solutionsConfig.solutions) {
 }
 $connectionReferences = @{}
 
-# Find all env vars prefixed with "ConnRef_" to set as connection references
+# Find all env vars prefixed with "DataverseConnRef_" to set as connection references
 Get-ChildItem Env: | Where-Object { $_.Name -like "DataverseConnRef_*" } | ForEach-Object {
     $connRefName = $_.Name.Substring(17) # Remove "DataverseConnRef_" prefix
     $connectionReferences[$connRefName] = $_.Value
@@ -64,7 +64,7 @@ Get-ChildItem Env: | Where-Object { $_.Name -like "DataverseConnRef_*" } | ForEa
 
 $environmentVariables = @{}
 
-# Find all env vars prefixed with "EnvVar_" to set as environment variables
+# Find all env vars prefixed with "DataverseEnvVar_" to set as environment variables
 Get-ChildItem Env: | Where-Object { $_.Name -like "DataverseEnvVar_*" } | ForEach-Object {
     $envVarName = $_.Name.Substring(16) # Remove "DataverseEnvVar_" prefix
     $environmentVariables[$envVarName] = $_.Value
