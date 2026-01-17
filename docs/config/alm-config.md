@@ -1,0 +1,123 @@
+# ALM Configuration (alm-config.psd1)
+
+The `alm-config.psd1` file in your repo is the central configuration file for the ALM4Dataverse pipeline system. It defines which solutions to deploy, assets to include, hook scripts to run, and dependencies required for the build, export, and deployment processes.
+
+## Location
+
+The configuration file should be placed in the repository root. The pipelines expect to find it at the root of your repository alongside your solution folders.
+
+## Configuration Sections
+
+### Solutions
+
+Defines the Dataverse solutions to be processed by the pipeline, in dependency order.
+
+```powershell
+solutions = @(
+    @{
+        name                      = 'MySolution'
+        deployUnmanaged           = $false  # Optional
+        serviceAccountUpnConfigKey = 'ServiceAccountUpn'  # Optional
+    }
+)
+```
+
+**Properties:**
+- `name` (required): Unique solution name that matches your solution folder in the source directory
+- `deployUnmanaged` (optional, default: false): Boolean indicating whether to deploy the unmanaged version instead of managed
+- `serviceAccountUpnConfigKey` (optional, default: 'ServiceAccountUpn'): Name of the environment configuration key containing the service account UPN to use when activating processes in this solution
+
+### Assets
+
+Extra folders or files to include in build artifacts, copied verbatim to the artifacts directory.
+
+```powershell
+assets = @(
+    'data',
+    'config',
+    'documentation'
+)
+```
+
+Paths are relative to the repository root. This is useful for including data migration scripts, configuration files, or other resources needed during deployment.
+
+### Hooks
+
+Hook scripts are executed at various stages of the build, export, and deployment processes. Each hook is a list of script paths relative to the repository root.
+
+```powershell
+hooks = @{
+    preExport      = @()
+    postExport     = @('data/system/export.ps1')
+    preDeploy      = @()
+    dataMigrations = @()
+    postDeploy     = @('data/system/import.ps1')
+    preBuild       = @()
+    postBuild      = @()
+}
+```
+
+**Available Hooks:**
+
+- **preExport**: Called before exporting solutions from a Dataverse environment
+- **postExport**: Called after exporting and unpacking solutions
+- **preBuild**: Called before packing solutions during the build process
+- **postBuild**: Called after packing solutions and copying assets
+- **preDeploy**: Called before staging and importing solutions
+- **dataMigrations**: Called during deployment after solutions are staged but before upgrades. Use this for data migration scripts that need to move data before columns are removed
+- **postDeploy**: Called after publish customizations
+
+#### Hook Context
+
+Each hook script receives a `$Context` parameter containing:
+
+- `HookType`: The type of hook being executed
+- `BaseDirectory`: The base directory for the hook (source or artifacts root)
+- `Config`: The loaded alm-config.psd1 configuration
+- Additional context specific to the hook type:
+  - **preBuild, postBuild**: `SourceDirectory`, `ArtifactStagingDirectory`
+  - **preExport, postExport**: `SourceDirectory`, `ArtifactStagingDirectory`, `TempDirectory`, `EnvironmentName`
+  - **preDeploy, dataMigrations, postDeploy**: `ArtifactsPath`, `UseUnmanagedSolutions`
+
+#### Hook Script Path Placeholder
+
+Hook script paths can use the `[alm]` placeholder to reference the ALM4Dataverse repository root:
+
+```powershell
+hooks = @{
+    postExport = @('[alm]/custom-hooks/myScript.ps1')
+}
+```
+
+The placeholder is replaced with the absolute path before execution, allowing you to use custom hook scripts provided by the ALM4Dataverse fork.
+
+### Script Dependencies
+
+PowerShell modules required by the scripts, with optional version pinning.
+
+```powershell
+scriptDependencies = @{
+    'Rnwood.Dataverse.Data.PowerShell' = '2.12.1'
+    'PSFramework'                       = ''           # Latest stable
+    'MyModule'                          = 'prerelease' # Latest prerelease
+}
+```
+
+**Version Specifications:**
+- Empty string (`''`): Installs the latest stable version
+- `'prerelease'`: Installs the latest prerelease version
+- Specific version (e.g., `'2.12.1'` or `'1.0.0-beta.1'`): Installs that exact version
+
+When build assets are generated, the version that has been selected is frozen and baked into the configuration file that will be used when deploying.
+This ensures that the same exact version of all dependencies is always used for each release, even across extended time period and environments.
+
+## Advanced - Fork Configuration
+
+To customize this configuration in a custom fork, create a `fork-almconfig.psd1` file in the ALM4Dataverse repository root.
+
+Fork configuration is merged with `alm-config.psd1` as follows:
+- **Hashtables**: Merged (fork values override template values)
+- **Arrays**: Concatenated (fork values appended to template values)
+- **This file's values take precedence** when merging
+
+This allows forks to add custom defaults without modifying the template.

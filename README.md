@@ -15,8 +15,22 @@ Features:
 - Supports including config/system/lookup data
 - Easy to extend using the extensive PowerShell ecosystem.
 
+
 ## Getting Started
 
-1) [Run the automated setup process](docs/automated-setup.md) to put in place the pipelines and other configuration needed.
+1) [Run the automated setup process](docs/setup/automated-setup.md) to put in place the pipelines and other configuration needed.
+    
 
-2) 
+## Documentation
+
+### Initial Setup
+
+- [Azure DevOps Organisation Requirements](docs/setup/azdo-organisation-requirements.md)
+- [Automated Setup](docs/setup/automated-setup.md)
+- [Manual Setup](docs/setup/manual-setup.md)
+
+### Configuration Reference
+
+- [ALM Configuration (alm-config.psd1)](docs/config/alm-config.md)
+- [Environment Variable Group](docs/config/environment-variable-group.md)
+- [Service Connection Configuration](docs/config/environment-service-connection.md)
