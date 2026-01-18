@@ -17,7 +17,7 @@ solutions = @(
     @{
         name                      = 'MySolution'
         deployUnmanaged           = $false  # Optional
-        serviceAccountUpnConfigKey = 'ServiceAccountUpn'  # Optional
+        serviceAccountUpnConfigKey = 'MySolutionServiceAccountUpn'  # Optional
     }
 )
 ```
@@ -25,7 +25,7 @@ solutions = @(
 **Properties:**
 - `name` (required): Unique solution name that matches your solution folder in the source directory
 - `deployUnmanaged` (optional, default: false): Boolean indicating whether to deploy the unmanaged version instead of managed
-- `serviceAccountUpnConfigKey` (optional, default: 'ServiceAccountUpn'): Name of the environment configuration key containing the service account UPN to use when activating processes in this solution
+- `serviceAccountUpnConfigKey` (optional, default: 'DataverseServiceAccountUpn'): Name of the environment configuration key containing the service account UPN to use when activating processes in this solution
 
 ### Assets
 

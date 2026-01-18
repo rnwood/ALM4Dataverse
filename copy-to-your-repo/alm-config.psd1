@@ -23,7 +23,7 @@
     # - deployUnmanaged: (optional) boolean indicating whether to deploy unmanaged version.
     # - serviceAccountUpnConfigKey: (optional) name of the environment configuration key containing
     #   the service account UPN to use when activating processes in this solution.
-    #   The default is 'ServiceAccountUpn'
+    #   The default is 'DataverseServiceAccountUpn'
     solutions = @(
     )
 
