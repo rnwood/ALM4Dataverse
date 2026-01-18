@@ -110,6 +110,12 @@ The Build Service needs Contribute permissions on your main repository to push c
 
 For each Dataverse environment (Dev, Test, UAT, Production, etc.), you need a Service Principal (App Registration) for authentication.
 
+> **Authentication Methods**: You can choose between two authentication approaches:
+> - **Service Principal with Client Secret (traditional)**: Simpler setup but requires managing and rotating secrets
+> - **Workload Identity Federation (recommended)**: More secure, no secrets to manage, uses OpenID Connect
+>
+> This guide covers both methods. Choose the approach that best fits your organization's security policies.
+
 ### 4.1 Create App Registration in Entra ID
 
 1. Navigate to the [Azure Portal](https://portal.azure.com)
@@ -120,7 +126,9 @@ For each Dataverse environment (Dev, Test, UAT, Production, etc.), you need a Se
 6. Click **Register**
 7. Note the **Application (client) ID** and **Directory (tenant) ID**
 
-### 4.2 Create Client Secret
+### 4.2 Configure Authentication
+
+#### Option A: Client Secret (Traditional)
 
 1. In the App Registration, go to **Certificates & secrets**
 2. Click **New client secret**
@@ -129,7 +137,29 @@ For each Dataverse environment (Dev, Test, UAT, Production, etc.), you need a Se
 5. Click **Add**
 6. **Important**: Copy the secret **Value** immediately (not the Secret ID) - you cannot view it again
 
-📖 **Reference**: [Register an application with Entra ID](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app)
+📖 **Reference**: [Add a client secret](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app#add-a-client-secret)
+
+#### Option B: Workload Identity Federation (Recommended)
+
+1. In the App Registration, go to **Certificates & secrets**
+2. Go to the **Federated credentials** tab
+3. Click **Add credential**
+4. Select **Other issuer**
+5. Fill in the details:
+   - **Issuer**: `https://vstoken.dev.azure.com/{organizationId}` 
+     - Replace `{organizationId}` with your Azure DevOps organization ID (GUID)
+     - To find your organization ID: Use the Azure DevOps REST API or see it in the setup script output
+   - **Subject identifier**: `sc://{organizationName}/{projectName}/{serviceConnectionName}`
+     - Replace `{organizationName}` with your Azure DevOps organization name
+     - Replace `{projectName}` with your Azure DevOps project name
+     - Replace `{serviceConnectionName}` with the service connection name you'll create (e.g., `Dev-main`, `PROD`)
+   - **Name**: `AzDO-{organizationName}-{projectName}-{serviceConnectionName}` (alphanumeric and hyphens only)
+   - **Audience**: `api://AzureADTokenExchange`
+6. Click **Add**
+
+📖 **References**: 
+- [Workload Identity Federation](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation)
+- [Configure a federated identity credential](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-create-trust)
 
 ### 4.3 Create Application User in Dataverse
 
@@ -157,6 +187,8 @@ Create a Service Connection for each Dataverse environment.
 
 ### For Each Environment (Dev-main, TEST-main, UAT-main, PROD, etc.):
 
+#### Using Client Secret Authentication:
+
 1. Go to **Project Settings** > **Service connections**
 2. Click **New service connection**
 3. Select **Power Platform**
@@ -170,7 +202,27 @@ Create a Service Connection for each Dataverse environment.
 6. **Do not** check "Grant access permission to all pipelines" - we'll configure specific permissions later
 7. Click **Save**
 
-📖 **Reference**: [Power Platform service connections](https://learn.microsoft.com/en-us/power-platform/alm/devops-build-tools#configure-service-connections-using-a-service-principal)
+#### Using Workload Identity Federation:
+
+1. Go to **Project Settings** > **Service connections**
+2. Click **New service connection**
+3. Select **Power Platform**
+4. Choose **Workload Identity federation (automatic)** authentication
+5. Fill in the details:
+   - **Server URL**: Your Dataverse environment URL (e.g., `https://yourorg.crm.dynamics.com`)
+   - **Tenant Id**: The Directory (tenant) ID from your App Registration
+   - **Application (client) Id**: The Application (client) ID from your App Registration
+   - **Service Principal Id**: The Application (client) ID (same as above)
+   - **Service connection name**: Use the pattern `{EnvironmentName}-main` (e.g., `Dev-main`, `PROD`)
+     - **Important**: This must match the `{serviceConnectionName}` you used when creating the federated credential
+6. **Do not** check "Grant access permission to all pipelines" - we'll configure specific permissions later
+7. Click **Save**
+
+> **Note**: When using WIF, ensure the federated credential in your App Registration matches the subject identifier pattern `sc://{organizationName}/{projectName}/{serviceConnectionName}`
+
+📖 **References**: 
+- [Power Platform service connections with client secret](https://learn.microsoft.com/en-us/power-platform/alm/devops-build-tools#configure-service-connections-using-a-service-principal)
+- [Workload Identity Federation for Azure DevOps](https://learn.microsoft.com/en-us/azure/devops/pipelines/library/connect-to-azure#workload-identity-federation)
 
 ---
 
