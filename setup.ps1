@@ -2740,8 +2740,8 @@ function Ensure-DataverseServiceAccountUser {
         $userAttributes = @{
             "domainname" = $ServiceAccountUPN
             "businessunitid" = $rootBuId
-            "internalemailaddress" = $ServiceAccountUPN,
-            "firstname" = "Service",
+            "internalemailaddress" = $ServiceAccountUPN
+            "firstname" = "Service"
             "lastname" = "Account"
         }
         $createdUser = $userAttributes | Set-DataverseRecord -Connection $conn -TableName "systemuser" -CreateOnly -PassThru
@@ -2900,13 +2900,14 @@ function Get-DataverseEnvironmentsSelection {
                             continue
                         }
 
-                        $shortName = Read-Host "Enter a short name for this environment (e.g. TEST, UAT, PROD)"
+                        Write-Host "Short environment names should often follow the pattern ENVIRONMENT-branch (e.g. TEST-main, UAT-main, PROD)" -ForegroundColor DarkGray
+
+                        $shortName = Read-Host "Enter a short name for this environment (e.g. TEST-main, UAT-main, PROD)"
                         if ([string]::IsNullOrWhiteSpace($shortName)) {
                             Write-Host "Short name is required." -ForegroundColor Red
                             Start-Sleep -Seconds 2
                             continue
                         }
-                        $shortName = $shortName.Replace("-main", "").Trim() + "-main"
  
                         if ($selectedEnvironments | Where-Object { $_.ShortName -eq $shortName }) {
                             Write-Host "An environment with short name '$shortName' is already selected." -ForegroundColor Red
