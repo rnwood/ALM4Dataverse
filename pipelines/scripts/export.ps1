@@ -35,7 +35,7 @@ Write-Host "##[section]Exporting Solutions from $EnvironmentName"
 
 # Read solutions configuration
 $solutionsConfig = Get-AlmConfig -BaseDirectory $SourceDirectory
-Write-Host "##[debug]Loaded configuration from alm-config.psd1"
+Write-Host "##[debug]Loaded configuration"
 
 Invoke-Hooks -HookType "preExport" -BaseDirectory $SourceDirectory -Config $solutionsConfig -AdditionalContext @{
     SourceDirectory = $SourceDirectory

@@ -8,24 +8,19 @@
 
 function Get-AlmConfig {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$BaseDirectory
+        [Parameter]
+        [string]$BaseDirectory = "."
     )
 
-    # Check for optional fork config at ../../.. from this script
-    # This allows forks to provide custom default configuration
     $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-    $forkConfigPath = Join-Path $scriptDirectory ".." ".." ".." "fork-almconfig.psd1"
+    $defaultConfigPath = Join-Path $scriptDirectory ".." ".." ".." "almconfig-defaults.psd1"
     
     $config = @{}
     
-    # Load fork config if it exists
-    if (Test-Path $forkConfigPath) {
-        Write-Host "##[group] Loading fork configuration from $forkConfigPath"
-        $forkConfig = Import-PowerShellDataFile -Path $forkConfigPath
-        $config = $forkConfig
-        Write-Host "##[endgroup]"
-    }
+    Write-Host "##[group] Loading default configuration from $defaultConfigPath"
+    $defaultConfig = Import-PowerShellDataFile -Path $defaultConfigPath
+    $config = $defaultConfig
+    Write-Host "##[endgroup]"
 
     # Load main config and merge
     $configPath = Join-Path $BaseDirectory "alm-config.psd1"
@@ -36,22 +31,22 @@ function Get-AlmConfig {
 
     $mainConfig = Import-PowerShellDataFile -Path $configPath
     
-    # Merge configs: mainConfig overrides forkConfig, arrays are concatenated
+    # Merge configs: mainConfig overrides defaultConfig, arrays are concatenated
     foreach ($key in $mainConfig.Keys) {
         if ($config.ContainsKey($key)) {
-            $forkValue = $config[$key]
+            $defaultValue = $config[$key]
             $mainValue = $mainConfig[$key]
             
             # If both are arrays, concatenate them
-            if ($forkValue -is [array] -and $mainValue -is [array]) {
-                $config[$key] = @($forkValue) + @($mainValue)
+            if ($defaultValue -is [array] -and $mainValue -is [array]) {
+                $config[$key] = @($defaultValue) + @($mainValue)
             }
             # If both are hashtables, merge them
-            elseif ($forkValue -is [hashtable] -and $mainValue -is [hashtable]) {
+            elseif ($defaultValue -is [hashtable] -and $mainValue -is [hashtable]) {
                 foreach ($subKey in $mainValue.Keys) {
-                    $forkValue[$subKey] = $mainValue[$subKey]
+                    $defaultValue[$subKey] = $mainValue[$subKey]
                 }
-                $config[$key] = $forkValue
+                $config[$key] = $defaultValue
             }
             # Otherwise, main value wins
             else {
@@ -63,12 +58,14 @@ function Get-AlmConfig {
         }
     }
     
-    # Preserve any keys from fork config that are not in main config
-    foreach ($key in $forkConfig.Keys) {
+    # Preserve any keys from default config that are not in main config
+    foreach ($key in $defaultConfig.Keys) {
         if (-not $mainConfig.ContainsKey($key)) {
-            $config[$key] = $forkConfig[$key]
+            $config[$key] = $defaultConfig[$key]
         }
     }
+
+    $config["defaults"] = $defaultConfig
     
     return $config
 }

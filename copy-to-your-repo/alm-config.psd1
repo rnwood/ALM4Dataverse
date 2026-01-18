@@ -88,10 +88,13 @@
         dataMigrations = @()
     }
 
-    # PowerShell modules required by the scripts.
+    # PowerShell modules required by the scripts in addition to the default modules.
+    # or to override with specific versions.
+
     # Key = module name, 
     # Value = version ('' = latest stable version, 'prerelease' = latest prerelease, or specific version).
     scriptDependencies = @{
-        'Rnwood.Dataverse.Data.PowerShell' = '2.14.2'
+        # Example:
+        # 'PnP.PowerShell' = '1.12.0'
     }
 }
