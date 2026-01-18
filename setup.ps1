@@ -2480,7 +2480,7 @@ function Update-AzDoVariableGroup {
         }
 
         # Use VSTeam command to update variable group
-        Update-VSTeamVariableGroup -ProjectName $ProjectName -Id $group.id -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description $group.description
+        Update-VSTeamVariableGroup -ProjectName $ProjectName -Id $group.id -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description $group.description | Out-Null
 
         Write-Host "Variable group '$GroupName' updated successfully."
         return $group
@@ -3465,7 +3465,7 @@ if ($environments.Count -gt 0) {
             if ($varGroup) {
                 Update-AzDoVariableGroup -ProjectName $selectedProject.Name -GroupName "Environment-Dev-main" -Variables @{
                     'DataverseServiceAccountUPN' = $serviceAccountUPN
-                }
+                } | Out-Null
             }
         }
 
