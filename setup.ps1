@@ -2107,13 +2107,13 @@ function New-EntraIdApplication {
             throw "OrganizationId, OrganizationName, ProjectName, and ServiceConnectionName are required for WIF authentication."
         }
 
-        Add-EntraIdFederatedCredential `
+        [void](Add-EntraIdFederatedCredential `
             -ApplicationObjectId $app.id `
             -TenantId $TenantId `
             -OrganizationId $OrganizationId `
             -OrganizationName $OrganizationName `
             -ProjectName $ProjectName `
-            -ServiceConnectionName $ServiceConnectionName
+            -ServiceConnectionName $ServiceConnectionName)
     }
     else {
         # Create secret for traditional authentication
