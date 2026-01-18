@@ -97,7 +97,7 @@ PowerShell modules required by the scripts, with optional version pinning.
 
 ```powershell
 scriptDependencies = @{
-    'Rnwood.Dataverse.Data.PowerShell' = '2.12.1'
+    'Pnp.PowerShell' = '2.12.1'      # Specific version
     'PSFramework'                       = ''           # Latest stable
     'MyModule'                          = 'prerelease' # Latest prerelease
 }
@@ -113,11 +113,11 @@ This ensures that the same exact version of all dependencies is always used for 
 
 ## Advanced - Fork Configuration
 
-To customize this configuration in a custom fork, create a `fork-almconfig.psd1` file in the ALM4Dataverse repository root.
+To customize this configuration in a custom fork, you can edit the `alm-config-defaults.psd1` file in the ALM4Dataverse repository root.
 
 Fork configuration is merged with `alm-config.psd1` as follows:
 - **Hashtables**: Merged (fork values override template values)
 - **Arrays**: Concatenated (fork values appended to template values)
 - **This file's values take precedence** when merging
 
-This allows forks to add custom defaults without modifying the template.
+This allows forks to add custom defaults that contribute custom config to each repo using the pipelines and without needing to make edits in each of those repos. For example, standard hook scripts can be added to extend ALM4Dataverse across every consuming repo. See the note above about `[alm]` placeholder allowing you to put the scripts in your fork of this repo.

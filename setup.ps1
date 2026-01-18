@@ -624,9 +624,7 @@ try {
     if (-not $memberId) {
         throw "Unable to determine memberId from profile response."
     }
-
-    Write-Host "Fetching organizations for memberId: $memberId" -ForegroundColor DarkGray
-    
+   
     $accountsUrl = "https://app.vssps.visualstudio.com/_apis/accounts?memberId=$memberId&api-version=6.0"
     $accountsResponse = Invoke-RestMethod -Uri $accountsUrl -Method Get -Headers $headers
     
@@ -635,8 +633,6 @@ try {
     if ($orgs.Count -eq 0) {
         throw "No Azure DevOps organizations were returned for this user."
     }
-
-    $orgs | ConvertTo-Json -Depth 100 | Write-Host -ForegroundColor DarkGray
 
     $orgsSorted = $orgs | Sort-Object -Property accountName
     $orgNames = @($orgsSorted | ForEach-Object { $_.accountName })
@@ -647,12 +643,10 @@ catch {
 }
 
 $orgIndex = 0
-if ($orgNames.Count -gt 1) {
-    $orgIndex = Select-FromMenu -Title "Select an Azure DevOps organization" -Items $orgNames
-    if ($null -eq $orgIndex) {
-        Write-Host "No organization selected." -ForegroundColor Yellow
-        return
-    }
+$orgIndex = Select-FromMenu -Title "Select an Azure DevOps organization" -Items $orgNames
+if ($null -eq $orgIndex) {
+    Write-Host "No organization selected." -ForegroundColor Yellow
+    return
 }
 
 $orgName = $orgNames[$orgIndex]
@@ -796,24 +790,66 @@ catch {
 Write-Section "Creating/updating shared repository '$sharedRepoName'"
 
 $hasCommits = Test-AzDoGitRepositoryHasCommits -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id
+$justInitialized = $false
 if (-not $hasCommits) {
     Write-Host "Repository '$sharedRepoName' has no commits. Seeding it from the upstream repo..." -ForegroundColor Yellow
 
     $sharedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
-    try {
-        $import = Start-AzDoGitRepositoryImport -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id -SourceGitUrl $sharedSourceUrl
-        [void](Wait-AzDoGitRepositoryImport -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id -ImportResponse $import -TimeoutSeconds 600)
+    $destUrl = $repo.remoteUrl
+    if (-not $destUrl) {
+        throw "Could not determine remoteUrl for repository '$sharedRepoName'."
+    }
 
-        Write-Host "shared import completed."
+    # Create a temp folder for initializing the repo
+    $workRoot = Join-Path $env:TEMP ("ALM4Dataverse-Init-" + [guid]::NewGuid().ToString('n'))
+    New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
+
+    try {
+        Push-Location $workRoot
+
+        # Initialize and pull from upstream
+        & git init | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Git init failed with exit code $LASTEXITCODE" }
+
+        & git remote add origin $sharedSourceUrl | Out-Null
+        & git fetch origin $ALM4DataverseRef | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Git fetch failed with exit code $LASTEXITCODE" }
+
+        # Determine the target ref
+        $targetRef = "origin/$ALM4DataverseRef"
+        & git rev-parse --verify --quiet $targetRef | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $targetRef = $ALM4DataverseRef
+            & git rev-parse --verify --quiet $targetRef | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Could not resolve reference '$ALM4DataverseRef' from upstream repository."
+            }
+        }
+
+        # Checkout the target ref as main branch
+        & git checkout -b main $targetRef | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Git checkout failed with exit code $LASTEXITCODE" }
+
+        # Push to Azure DevOps
+        & git remote set-url origin $destUrl | Out-Null
+        & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push -u origin main
+        if ($LASTEXITCODE -ne 0) { throw "Git push failed with exit code $LASTEXITCODE" }
+
+        Write-Host "Shared repository initialized successfully."
+        $justInitialized = $true
     }
     catch {
-        Write-Host "Repository import attempt failed." -ForegroundColor Red
-        Write-Host "If Azure DevOps reports it needs a service connection, create a Git service connection with access to the source repo and retry." -ForegroundColor Yellow
+        Write-Host "Repository initialization failed: $($_.Exception.Message)" -ForegroundColor Red
         throw
+    }
+    finally {
+        if ((Get-Location).Path -eq $workRoot) { Pop-Location }
+        try { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     }
 }
 
-# Check if we can fast-forward from the shared repo
+# Check if we can fast-forward from the shared repo (skip if just initialized)
+if (-not $justInitialized) {
 $sharedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
 $destUrl = $repo.remoteUrl
 if (-not $destUrl) {
@@ -837,7 +873,7 @@ try {
     
     # Add upstream remote
     & git remote add upstream $sharedSourceUrl | Out-Null
-    & git fetch upstream --tags | Out-Null
+    & git fetch upstream $ALM4DataverseRef | Out-Null
     
     # Check relationship between HEAD and upstream ref
     $targetRef = "upstream/$ALM4DataverseRef"
@@ -891,7 +927,7 @@ try {
                     if ($LASTEXITCODE -ne 0) { throw "Git rebase failed - this script can't handle conflicts. You need to rebase your local changes manually." }
                         
                     Write-Host "Pushing rebased branch (force-with-lease)..." -ForegroundColor Yellow
-                    & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push --force-with-lease origin $branch
+                    & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push --force-with-lease origin
                     if ($LASTEXITCODE -ne 0) { throw "Git push failed" }
                         
                     Write-Host "Repository updated successfully."
@@ -908,6 +944,8 @@ finally {
     if ((Get-Location).Path -eq $workRoot) { Pop-Location }
     try { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 }
+}
+# End of fast-forward check skip
 
 #endregion
 
@@ -2727,7 +2765,6 @@ function Ensure-DataverseServiceAccountUser {
     # 3. Find the System User by UPN
     $user = Get-DataverseRecord -Connection $conn -TableName "systemuser" -FilterValues @{ 
         domainname = $ServiceAccountUPN
-        isdisabled = $false
     } -Columns "systemuserid","fullname" | Select-Object -First 1
     
     $userId = $null

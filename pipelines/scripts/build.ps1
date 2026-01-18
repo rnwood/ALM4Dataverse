@@ -71,7 +71,7 @@ if ($config.assets -and $config.assets.Count -gt 0) {
 }
 
 Write-Host "##[group]Copying deployment scripts"
-Copy-Item $PSScriptRoot -Destination "$ArtifactStagingDirectory/pipelines/scripts" -Recurse -Force -Verbose
+Copy-Item $PSScriptRoot/../.. -Destination "$ArtifactStagingDirectory/alm" -Recurse -Force -Verbose
 Copy-Item (Join-Path $SourceDirectory 'alm-config.psd1') -Destination (Join-Path $ArtifactStagingDirectory 'alm-config.psd1') -Force -Verbose
 
 # Create lock file with pinned module versions

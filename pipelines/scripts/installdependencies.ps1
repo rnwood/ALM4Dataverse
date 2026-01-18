@@ -13,9 +13,11 @@
     - specific version number (e.g. '1.2.3' or '1.2.3-beta.1'): installs that specific version
 #>
 
+. $PSScriptRoot/common.ps1
+
 Write-Host "##[group] Installing Dependencies"
 
-$config = Import-PowerShellDataFile -Path 'alm-config.psd1'
+$config = Get-AlmConfig
 
 $lockFile = 'scriptDependencies.lock.json'
 if (Test-Path $lockFile) {
@@ -27,6 +29,7 @@ if (Test-Path $lockFile) {
 foreach ($module in $config.scriptDependencies.Keys) {
 
     $version = $config.scriptDependencies[$module]
+
     Write-Host "Installing $module module with version specifier: '$version'"
     if ($version -eq '') {
         $installedModule = Install-Module -Name $module -Scope CurrentUser -Force -PassThru
@@ -38,6 +41,13 @@ foreach ($module in $config.scriptDependencies.Keys) {
         $installedModule = Install-Module -Name $module -Scope CurrentUser -Force -RequiredVersion $version -AllowPrerelease:($version.Contains("-")) -PassThru
     }
     Write-Host "Installed $module version $($installedModule.Version)"
+    
+    if ($config.defaults.scriptDependencies.ContainsKey($module)) {
+        $defaultVersion = $config.defaults.scriptDependencies[$module]
+        if (([version] $version) -lt ([version]$defaultVersion)) {
+            throw "Installed version $($installedModule.Version) of $module is less than the default minimum required version $defaultVersion. Please update the version in alm-config.psd1."
+        }
+    }
 
     # Manually load the installed module to ensure the correct version is used
     # This is complex because Import-Module does not support version ranges or prerelease directly

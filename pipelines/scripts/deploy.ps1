@@ -35,7 +35,7 @@ Write-Host "##[section]Deploying "
 # Read solution configuration
 # Simplified logic: alm-config.psd1 should be in the artifacts root
 $solutionsConfig = Get-AlmConfig -BaseDirectory $ArtifactsPath
-Write-Host "##[debug]Loaded configuration from alm-config.psd1"
+Write-Host "##[debug]Loaded configuration"
 
 Invoke-Hooks -HookType "preDeploy" -BaseDirectory $ArtifactsPath -Config $solutionsConfig -AdditionalContext @{
     ArtifactsPath = $ArtifactsPath
