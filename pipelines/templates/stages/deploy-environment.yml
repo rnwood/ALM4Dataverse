@@ -32,12 +32,12 @@ stages:
                     PowerPlatformSPN: '${{ parameters.environmentName }}'
                 
                 - pwsh: |
-                    & "$(Pipeline.Workspace)/build/artifacts/pipelines/scripts/installdependencies.ps1"
-                    & "$(Pipeline.Workspace)/build/artifacts/pipelines/scripts/connect.ps1" -ConnectionString "$(connectionVariables.BuildTools.DataverseConnectionString)"
+                    & "$(Pipeline.Workspace)/build/artifacts/alm/pipelines/scripts/installdependencies.ps1"
+                    & "$(Pipeline.Workspace)/build/artifacts/alm/pipelines/scripts/connect.ps1" -ConnectionString "$(connectionVariables.BuildTools.DataverseConnectionString)"
                     
                     # Run the deployment script FROM THE ARTIFACTS
                     # This ensures the script version matches the solution version being deployed
-                    & "$(Pipeline.Workspace)/build/artifacts/pipelines/scripts/deploy.ps1" `
+                    & "$(Pipeline.Workspace)/build/artifacts/alm/pipelines/scripts/deploy.ps1" `
                       -ArtifactsPath "$(Pipeline.Workspace)/build/artifacts"
                   displayName: 'Connect and Run Deployment Script from Artifacts'
                   workingDirectory: '$(Pipeline.Workspace)/build/artifacts'
