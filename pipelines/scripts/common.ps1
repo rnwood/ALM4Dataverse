@@ -13,7 +13,7 @@ function Get-AlmConfig {
     )
 
     $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-    $defaultConfigPath = Join-Path $scriptDirectory ".." ".." ".." "almconfig-defaults.psd1"
+    $defaultConfigPath = Join-Path $scriptDirectory ".." ".." ".." "alm-config-defaults.psd1"
     
     $config = @{}
     
