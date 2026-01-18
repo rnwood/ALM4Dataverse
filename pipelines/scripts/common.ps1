@@ -11,7 +11,7 @@ function Get-AlmConfig {
         [string]$BaseDirectory = "."
     )
 
-    $defaultConfigPath = Join-Path $PSScriptRoot ".." ".." ".." "alm-config-defaults.psd1"
+    $defaultConfigPath = Join-Path $PSScriptRoot ".." ".." "alm-config-defaults.psd1"
     
     $config = @{}
     
