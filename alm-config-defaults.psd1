@@ -1,5 +1,5 @@
 @{
     scriptDependencies = @{
-        "Rnwood.Dataverse.Data.PowerShell" = "2.16.0"
+        "Rnwood.Dataverse.Data.PowerShell" = "2.16.1"
     }
 }
