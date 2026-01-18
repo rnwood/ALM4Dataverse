@@ -11,7 +11,7 @@ function Get-AlmConfig {
         [string]$BaseDirectory = "."
     )
 
-    $defaultConfigPath = Join-Path $PSScriptRoot ".." ".." "alm-config-defaults.psd1"
+    $defaultConfigPath = Join-Path $PSScriptRoot ".." ".." "alm-config-defaults.psd1" | Resolve-Path | Select-Object -ExpandProperty Path
     
     $config = @{}
     
@@ -97,8 +97,7 @@ function Invoke-Hooks {
             }
             
             # Replace [alm] placeholder with the absolute path of the ALM repo root
-            $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-            $almRootPath = Join-Path $scriptDirectory ".." ".." ".." | Resolve-Path | Select-Object -ExpandProperty Path
+            $almRootPath = Join-Path $PSScriptRoot ".." ".." ".." | Resolve-Path | Select-Object -ExpandProperty Path
             $processedHook = $hook -replace '\[alm\]', $almRootPath
             
             $hookPath = Join-Path $BaseDirectory $processedHook
