@@ -8,7 +8,6 @@
 
 function Get-AlmConfig {
     param(
-        [Parameter]
         [string]$BaseDirectory = "."
     )
 
