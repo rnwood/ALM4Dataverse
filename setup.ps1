@@ -1447,20 +1447,27 @@ function Ensure-AzDoYamlPipelineDefinition {
 
         # Use Invoke-VSTeamRequest since VSTeam build definition commands require JSON files
         $body = @{
-            name       = $DefinitionName
-            path       = $FolderPath
-            type       = 'build'
-            queue      = @{ id = $QueueId }
-            repository = @{
+            name        = $DefinitionName
+            path        = $FolderPath
+            type        = 'build'
+            queueStatus = 'enabled'
+            queue       = @{ id = $QueueId }
+            repository  = @{
                 id            = $Repository.Id
                 name          = $Repository.Name
                 type          = 'TfsGit'
                 defaultBranch = $repoBranch
             }
-            process    = @{
+            process     = @{
                 type         = 2
                 yamlFilename = $YamlPath
             }
+            triggers    = @(
+                @{
+                    settingsSourceType = 2
+                    triggerType        = 'continuousIntegration'
+                }
+            )
         }
 
         $resource = "build/definitions"
