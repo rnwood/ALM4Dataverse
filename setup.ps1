@@ -239,10 +239,12 @@ if (-not ($env:PSModulePath -split [Regex]::Escape($delim) | Where-Object { $_ -
 
 Write-Host "Using temp module root: $TempModuleRoot"
 
+$config = Import-PowerShellDataFile -Path (Join-Path $PSScriptRoot 'alm-config-defaults.psd1')
+
 $requiredModules = @{
     'VSTeam'                           = '7.15.2'
     'PSMenu'                           = '0.2.0'
-    'Rnwood.Dataverse.Data.PowerShell' = '2.14.0'
+    'Rnwood.Dataverse.Data.PowerShell' = $config.scriptDependencies.'Rnwood.Dataverse.Data.PowerShell'
 }
 
 # Ensure modules are downloaded before loading so we can patch them
@@ -946,6 +948,61 @@ finally {
 }
 }
 # End of fast-forward check skip
+
+#endregion
+
+#region Dataverse Environment Selection Helper
+
+function Select-DataverseEnvironment {
+    [CmdletBinding()]
+    param(
+        [Parameter()][string]$Prompt = "Select a Dataverse environment",
+        [Parameter()][string]$ExcludeUrl
+    )
+
+    Write-Host "Listing Dataverse environments..." -ForegroundColor Yellow
+
+    # Get all environments using Get-DataverseEnvironment
+    $environments = @(Get-DataverseEnvironment -AccessToken { 
+        param($resource)
+        if (-not $resource) { $resource = 'https://globaldisco.crm.dynamics.com/' }
+        try {
+            $uri = [System.Uri]$resource
+            $resource = $uri.GetLeftPart([System.UriPartial]::Authority)
+        } catch {}
+        $auth = Get-AuthToken -ResourceUrl $resource
+        return $auth.AccessToken
+    })
+
+    if (-not $environments -or $environments.Count -eq 0) {
+        throw "No Dataverse environments found for this user."
+    }
+
+    # Filter out excluded URL if provided
+    if ($ExcludeUrl) {
+        $environments = @($environments | Where-Object { 
+            $_.Endpoints["WebApplication"] -ne $ExcludeUrl 
+        })
+        if ($environments.Count -eq 0) {
+            throw "No environments available after filtering."
+        }
+    }
+
+    # Build menu items
+    $menuItems = @()
+    foreach ($env in $environments) {
+        $webUrl = $env.Endpoints["WebApplication"]
+        $menuItems += "$($env.FriendlyName) - $($env.UniqueName) ($webUrl)"
+    }
+
+    # Show menu
+    $selectedIndex = Select-FromMenu -Title $Prompt -Items $menuItems
+    if ($null -eq $selectedIndex) {
+        return $null
+    }
+
+    return $environments[$selectedIndex]
+}
 
 #endregion
 
@@ -2365,29 +2422,27 @@ function Get-DataverseSolutionsSelection {
     )
     
     try {
-        Write-Host "Listing Dataverse environments current user has access to..." -ForegroundColor Yellow
-        
         Write-Host ""
         Write-Host "When prompted, select your dataverse DEV environment containing the solution(s) you want to manage" -ForegroundColor Green
         Write-Host ""
 
-        # Connect to Dataverse using provided URL and token
-        # If no URL is provided, Get-DataverseConnection will prompt for environment selection
-        # We pass the token provider to allow it to get tokens for discovery AND the selected environment
-        $connection = Get-DataverseConnection -AccessToken { 
+        # Select environment using the helper function
+        $selectedEnv = Select-DataverseEnvironment -Prompt "Select your DEV environment"
+        if (-not $selectedEnv) {
+            throw "No environment selected."
+        }
+
+        $devEnvUrl = $selectedEnv.Endpoints["WebApplication"]
+        Write-Host "Selected environment: $($selectedEnv.FriendlyName) ($devEnvUrl)" -ForegroundColor Cyan
+
+        # Connect to the selected environment
+        $connection = Get-DataverseConnection -Url $devEnvUrl -AccessToken { 
             param($resource)
             if (-not $resource) { $resource = 'https://globaldisco.crm.dynamics.com/' }
-            
-            # The cmdlet passes the full API URL (e.g. .../api/discovery/... or .../XRMServices/...), 
-            # but we need the resource root (scheme + authority) for the token scope.
             try {
                 $uri = [System.Uri]$resource
                 $resource = $uri.GetLeftPart([System.UriPartial]::Authority)
-            }
-            catch {
-                # If parsing fails, use the original string (shouldn't happen for valid URLs)
-            }
-
+            } catch {}
             $auth = Get-AuthToken -ResourceUrl $resource
             return $auth.AccessToken
         }
@@ -2395,8 +2450,6 @@ function Get-DataverseSolutionsSelection {
         if (-not $connection) {
             throw "Failed to connect to Dataverse environment."
         }
-        
-        $devEnvUrl = $connection.ConnectedOrgPublishedEndpoints["WebApplication"]
         
         Write-Host "Connected to environment: $($connection.ConnectedOrgFriendlyName)"
         Write-Host "Retrieving solutions..." -ForegroundColor Yellow
@@ -2668,12 +2721,12 @@ function Ensure-DataverseApplicationUser {
 
     $conn = Get-DataverseConnection -Url $EnvironmentUrl -AccessToken { 
         param($resource)
-        if (-not $resource) { $resource = 'https://globaldisco.crm.dynamics.com/' }
+        if (-not $resource) { $resource = $EnvironmentUrl }
         try {
             $uri = [System.Uri]$resource
             $resource = $uri.GetLeftPart([System.UriPartial]::Authority)
         } catch {}
-        $auth = Get-AuthToken -ResourceUrl $resource
+        $auth = Get-AuthToken -ResourceUrl $resource -TenantId $TenantId
         return $auth.AccessToken
     }
 
@@ -2738,12 +2791,12 @@ function Ensure-DataverseServiceAccountUser {
 
     $conn = Get-DataverseConnection -Url $EnvironmentUrl -AccessToken { 
         param($resource)
-        if (-not $resource) { $resource = 'https://globaldisco.crm.dynamics.com/' }
+        if (-not $resource) { $resource = $EnvironmentUrl }
         try {
             $uri = [System.Uri]$resource
             $resource = $uri.GetLeftPart([System.UriPartial]::Authority)
         } catch {}
-        $auth = Get-AuthToken -ResourceUrl $resource
+        $auth = Get-AuthToken -ResourceUrl $resource -TenantId $TenantId
         return $auth.AccessToken
     }
 
@@ -2863,12 +2916,28 @@ function Get-DataverseEnvironmentsSelection {
             # Get Service Endpoints to resolve URLs
             $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $ProjectName -ErrorAction SilentlyContinue)
             
+            # Also get all Dataverse environments for mapping
+            $allDataverseEnvs = @(Get-DataverseEnvironment -AccessToken { 
+                param($resource)
+                if (-not $resource) { $resource = 'https://globaldisco.crm.dynamics.com/' }
+                try {
+                    $uri = [System.Uri]$resource
+                    $resource = $uri.GetLeftPart([System.UriPartial]::Authority)
+                } catch {}
+                $auth = Get-AuthToken -ResourceUrl $resource
+                return $auth.AccessToken
+            })
+            
             foreach ($name in $existingNames) {
                 $ep = $endpoints | Where-Object { $_.name -eq $name } | Select-Object -First 1
                 if ($ep -and $ep.url) {
+                    # Try to find matching Dataverse environment for FriendlyName
+                    $dvEnv = $allDataverseEnvs | Where-Object { $_.Endpoints["WebApplication"] -eq $ep.url } | Select-Object -First 1
+                    $friendlyName = if ($dvEnv) { $dvEnv.FriendlyName } else { "$name (Existing)" }
+                    
                     $selectedEnvironments += [pscustomobject]@{
                         ShortName = $name
-                        FriendlyName = "$name (Existing)"
+                        FriendlyName = $friendlyName
                         Url = $ep.url
                     }
                 }
@@ -2908,60 +2977,45 @@ function Get-DataverseEnvironmentsSelection {
         switch ($action) {
             'Add an environment' {
                 try {
-                    Write-Host "Connecting to Dataverse environment..." -ForegroundColor Yellow
+                    # Use the helper function to select an environment
+                    $selectedEnv = Select-DataverseEnvironment -Prompt "Select a deployment environment" -ExcludeUrl $ExcludedUrl
                     
-                    $connection = Get-DataverseConnection -AccessToken { 
-                        param($resource)
-                        if (-not $resource) { $resource = 'https://globaldisco.crm.dynamics.com/' }
-                        try {
-                            $uri = [System.Uri]$resource
-                            $resource = $uri.GetLeftPart([System.UriPartial]::Authority)
-                        } catch {}
-                        $auth = Get-AuthToken -ResourceUrl $resource
-                        return $auth.AccessToken
+                    if (-not $selectedEnv) {
+                        continue
                     }
 
-                    if ($connection) {
+                    $url = $selectedEnv.Endpoints["WebApplication"]
 
-                        $url =  $connection.ConnectedOrgPublishedEndpoints["WebApplication"]
+                    if ($selectedEnvironments | Where-Object { $_.Url -eq $url }) {
+                        Write-Host "An environment with Url '$url' is already selected." -ForegroundColor Red
+                        Start-Sleep -Seconds 2
+                        continue
+                    }
 
-                        if ($ExcludedUrl -and $url -eq $ExcludedUrl) {
-                            Write-Host "Cannot select the same environment used for solutions." -ForegroundColor Red
-                            Start-Sleep -Seconds 2
-                            continue
-                        }
+                    Write-Host "Short environment names should often follow the pattern ENVIRONMENT-branch (e.g. TEST-main, UAT-main, PROD)" -ForegroundColor DarkGray
 
-                        if ($selectedEnvironments | Where-Object { $_.Url -eq $url }) {
-                            Write-Host "An environment with Url '$url' is already selected." -ForegroundColor Red
-                            Start-Sleep -Seconds 2
-                            continue
-                        }
-
-                        Write-Host "Short environment names should often follow the pattern ENVIRONMENT-branch (e.g. TEST-main, UAT-main, PROD)" -ForegroundColor DarkGray
-
-                        $shortName = Read-Host "Enter a short name for this environment (e.g. TEST-main, UAT-main, PROD)"
-                        if ([string]::IsNullOrWhiteSpace($shortName)) {
-                            Write-Host "Short name is required." -ForegroundColor Red
-                            Start-Sleep -Seconds 2
-                            continue
-                        }
+                    $shortName = Read-Host "Enter a short name for this environment (e.g. TEST-main, UAT-main, PROD)"
+                    if ([string]::IsNullOrWhiteSpace($shortName)) {
+                        Write-Host "Short name is required." -ForegroundColor Red
+                        Start-Sleep -Seconds 2
+                        continue
+                    }
  
-                        if ($selectedEnvironments | Where-Object { $_.ShortName -eq $shortName }) {
-                            Write-Host "An environment with short name '$shortName' is already selected." -ForegroundColor Red
-                            Start-Sleep -Seconds 2
-                            continue
-                        }
-
-                        $envInfo = [pscustomobject]@{
-                            ShortName = $shortName
-                            FriendlyName = $connection.ConnectedOrgFriendlyName
-                            Url = $url
-                        }
-                        $selectedEnvironments += $envInfo
+                    if ($selectedEnvironments | Where-Object { $_.ShortName -eq $shortName }) {
+                        Write-Host "An environment with short name '$shortName' is already selected." -ForegroundColor Red
+                        Start-Sleep -Seconds 2
+                        continue
                     }
+
+                    $envInfo = [pscustomobject]@{
+                        ShortName = $shortName
+                        FriendlyName = $selectedEnv.FriendlyName
+                        Url = $url
+                    }
+                    $selectedEnvironments += $envInfo
                 }
                 catch {
-                    Write-Host "Failed to connect: $_" -ForegroundColor Red
+                    Write-Host "Failed to select environment: $_" -ForegroundColor Red
                     Start-Sleep -Seconds 3
                 }
             }
