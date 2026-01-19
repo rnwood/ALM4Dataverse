@@ -1110,7 +1110,7 @@ function Sync-CopyToYourRepoIntoGitRepo {
                 $destPath = Join-Path $cloneRoot "pipelines/DEPLOY-$branch.yml"
                 
                 $content = Get-Content -LiteralPath $file.FullName -Raw
-                $content = $content -replace "source: 'BUILD'", "source: '\$($TargetRepo.Name)\BUILD'"
+                $content = $content -replace "source: 'BUILD'", "source: '$($TargetRepo.Name)\BUILD'"
                 # Update trigger branch
                 $content = $content -replace "- main", "- $branch"
                 
