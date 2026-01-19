@@ -3,7 +3,7 @@ parameters:
     type: string
 
 stages:
-  - stage: Deploy_${{ replace(parameters.environmentName, '-', '_') }}
+  - stage: Deploy_${{ replace(replace(replace(replace(replace(replace(parameters.environmentName, ' ', '_'), '-', '_'), '.', '_'), '(', '_'), ')', '_'), '/', '_') }}
     displayName: 'Deploy to ${{ parameters.environmentName }}'
     
     jobs:
