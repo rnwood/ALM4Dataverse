@@ -28,6 +28,8 @@ jobs:
               -ErrorAction SilentlyContinue)) {
             Register-PSRepository -Default
           }
+          # Set PSGallery to trusted for automated environments
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
 
       - name: Check for outdated dependencies
         id: check

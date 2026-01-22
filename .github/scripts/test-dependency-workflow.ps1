@@ -98,7 +98,7 @@ try {
     
     $branchName = "deps/update-$($moduleName.ToLower())-to-$($readDeps.latestVersion)"
     
-    if ($branchName -notmatch '^deps/update-[a-z0-9\.-]+-to-[0-9\.]+$') {
+    if ($branchName -notmatch '^deps/update-[a-z0-9\._-]+-to-[0-9\.]+$') {
         throw "Branch name does not match expected pattern"
     }
     

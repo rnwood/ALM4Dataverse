@@ -60,11 +60,12 @@ foreach ($dep in $outdatedDeps) {
         try {
             git fetch origin $existingPR.headRefName
             git checkout -B $existingPR.headRefName origin/$existingPR.headRefName
-            # Merge latest from base branch
-            git merge origin/$baseBranch --no-edit
+            # Rebase on top of base branch for linear history
+            git rebase origin/$baseBranch
         }
         catch {
-            Write-Host "##[warning]Could not checkout existing branch, creating new one"
+            Write-Host "##[warning]Could not checkout/rebase existing branch, creating new one"
+            git rebase --abort 2>$null || $true
             git checkout -b $branchName origin/$baseBranch
         }
     } else {
@@ -76,8 +77,12 @@ foreach ($dep in $outdatedDeps) {
     $configPath = "alm-config-defaults.psd1"
     $configContent = Get-Content $configPath -Raw
     
+    # Escape special regex characters in module name and version
+    $escapedModuleName = [regex]::Escape($moduleName)
+    $escapedCurrentVersion = [regex]::Escape($currentVersion)
+    
     # Replace the version for this specific module - handle both single and double quotes
-    $pattern = "(`"$moduleName`"|'$moduleName')\s*=\s*(`"|')$currentVersion(`"|')"
+    $pattern = "(`"$escapedModuleName`"|'$escapedModuleName')\s*=\s*(`"|')$escapedCurrentVersion(`"|')"
     $replacement = "`${1} = `"`$latestVersion`""
     $newContent = $configContent -replace $pattern, $replacement
     
@@ -101,7 +106,7 @@ foreach ($dep in $outdatedDeps) {
     # Commit and push
     git add $configPath
     git commit -m "chore(deps): update $moduleName to $latestVersion"
-    git push -f origin HEAD
+    git push --force-with-lease origin HEAD
     
     # Create or update PR
     $prTitle = "chore(deps): update $moduleName to $latestVersion"
