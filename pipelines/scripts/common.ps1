@@ -110,9 +110,8 @@ function Invoke-Hooks {
             
             # Replace [alm] placeholder with the absolute path of the ALM repo root
             $almRootPath = Join-Path $PSScriptRoot ".." ".." | Resolve-Path | Select-Object -ExpandProperty Path
-            $processedHook = $hook -replace '\[alm\]', $almRootPath
+            $hookPath = $hook -replace '\[alm\]', $almRootPath
             
-            $hookPath = Join-Path $BaseDirectory $processedHook
             if (Test-Path $hookPath) {
 
                 & $hookPath -Context $context
