@@ -1,6 +1,6 @@
 name: Update Script Dependencies
 
-on:
+'on':
   schedule:
     # Run daily at 2 AM UTC
     - cron: '0 2 * * *'
@@ -21,18 +21,20 @@ jobs:
         shell: pwsh
         run: |
           # Install NuGet provider
-          Install-PackageProvider -Name NuGet -Force -Scope CurrentUser
+          Install-PackageProvider -Name NuGet -Force `
+            -Scope CurrentUser
           # Register PSGallery if needed
-          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+          if (-not (Get-PSRepository -Name PSGallery `
+              -ErrorAction SilentlyContinue)) {
             Register-PSRepository -Default
           }
-          
+
       - name: Check for outdated dependencies
         id: check
         shell: pwsh
         run: |
           . .github/scripts/check-outdated-dependencies.ps1
-          
+
       - name: Create or update PRs
         if: steps.check.outputs.has_updates == 'true'
         shell: pwsh
