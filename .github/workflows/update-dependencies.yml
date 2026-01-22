@@ -1,0 +1,46 @@
+name: Update Script Dependencies
+
+'on':
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup PowerShell modules
+        shell: pwsh
+        run: |
+          # Install NuGet provider
+          Install-PackageProvider -Name NuGet -Force `
+            -Scope CurrentUser
+          # Register PSGallery if needed
+          if (-not (Get-PSRepository -Name PSGallery `
+              -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
+          # Set PSGallery to trusted for automated environments
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+
+      - name: Check for outdated dependencies
+        id: check
+        shell: pwsh
+        run: |
+          . .github/scripts/check-outdated-dependencies.ps1
+
+      - name: Create or update PRs
+        if: steps.check.outputs.has_updates == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          . .github/scripts/update-dependency-prs.ps1
