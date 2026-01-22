@@ -20,9 +20,6 @@ jobs:
       - name: Setup PowerShell modules
         shell: pwsh
         run: |
-          # Install NuGet provider
-          Install-PackageProvider -Name NuGet -Force `
-            -Scope CurrentUser
           # Register PSGallery if needed
           if (-not (Get-PSRepository -Name PSGallery `
               -ErrorAction SilentlyContinue)) {
