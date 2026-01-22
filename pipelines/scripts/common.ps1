@@ -17,7 +17,6 @@ function Get-AlmConfig {
     
     Write-Host "##[group] Loading default configuration from $defaultConfigPath"
     $defaultConfig = Import-PowerShellDataFile -Path $defaultConfigPath
-    $config = $defaultConfig
     Write-Host "##[endgroup]"
 
     # Load main config and merge
@@ -28,23 +27,36 @@ function Get-AlmConfig {
     }
 
     $mainConfig = Import-PowerShellDataFile -Path $configPath
+
+    function mergeHashTables($defaultConfig, $mainConfig) {
+        if (-not $defaultConfig) {
+            return $mainConfig
+        }
+
+        if (-not $mainConfig) {
+            return $defaultConfig
+        }
+
+        $newValue = @{}
+        foreach ($subKey in $defaultConfig.Keys + $mainConfig.Keys | Select-Object -Unique) {
+            $newValue[$subKey] = mergeHashTables $defaultConfig[$subKey] $mainConfig[$subKey]
+        }
+        return $newValue
+    }
     
     # Merge configs: mainConfig overrides defaultConfig, arrays are concatenated
     foreach ($key in $mainConfig.Keys) {
-        if ($config.ContainsKey($key)) {
-            $defaultValue = $config[$key]
+        if ($defaultConfig.ContainsKey($key)) {
+            $defaultValue = $defaultConfig[$key]
             $mainValue = $mainConfig[$key]
             
             # If both are arrays, concatenate them
             if ($defaultValue -is [array] -and $mainValue -is [array]) {
-                $config[$key] = @($defaultValue) + @($mainValue)
+                $config[$key] = @(@($defaultValue) + @($mainValue)) 
             }
             # If both are hashtables, merge them
             elseif ($defaultValue -is [hashtable] -and $mainValue -is [hashtable]) {
-                foreach ($subKey in $mainValue.Keys) {
-                    $defaultValue[$subKey] = $mainValue[$subKey]
-                }
-                $config[$key] = $defaultValue
+                $config[$key] = mergeHashTables $defaultValue $mainValue
             }
             # Otherwise, main value wins
             else {
@@ -87,9 +99,9 @@ function Invoke-Hooks {
             
             # Build context hashtable with required and additional entries
             $context = @{
-                HookType       = $HookType
-                BaseDirectory  = $BaseDirectory
-                Config         = $Config
+                HookType      = $HookType
+                BaseDirectory = $BaseDirectory
+                Config        = $Config
             }
             # Add any additional context entries
             foreach ($key in $AdditionalContext.Keys) {
@@ -97,7 +109,7 @@ function Invoke-Hooks {
             }
             
             # Replace [alm] placeholder with the absolute path of the ALM repo root
-            $almRootPath = Join-Path $PSScriptRoot ".." ".." ".." | Resolve-Path | Select-Object -ExpandProperty Path
+            $almRootPath = Join-Path $PSScriptRoot ".." ".." | Resolve-Path | Select-Object -ExpandProperty Path
             $processedHook = $hook -replace '\[alm\]', $almRootPath
             
             $hookPath = Join-Path $BaseDirectory $processedHook
