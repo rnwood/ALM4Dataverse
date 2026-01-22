@@ -27,7 +27,14 @@ if (-not $outdatedDeps -or $outdatedDeps.Count -eq 0) {
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 
-$baseBranch = "main"
+# Determine base branch from the current repository
+$baseBranch = git rev-parse --abbrev-ref HEAD
+if ($baseBranch -like "deps/*" -or $baseBranch -like "copilot/*") {
+    # If we're on a feature branch, use main as base
+    $baseBranch = "main"
+}
+
+Write-Host "Using base branch: $baseBranch"
 
 foreach ($dep in $outdatedDeps) {
     $moduleName = $dep.name
@@ -43,6 +50,9 @@ foreach ($dep in $outdatedDeps) {
     $existingPRs = gh pr list --state open --json number,headRefName,title | ConvertFrom-Json
     $existingPR = $existingPRs | Where-Object { $_.headRefName -like "deps/update-$($moduleName.ToLower())-*" }
     
+    # Fetch the base branch to ensure we have the latest
+    git fetch origin $baseBranch
+    
     if ($existingPR) {
         Write-Host "Found existing PR #$($existingPR.number) with branch $($existingPR.headRefName)"
         
@@ -50,31 +60,43 @@ foreach ($dep in $outdatedDeps) {
         try {
             git fetch origin $existingPR.headRefName
             git checkout -B $existingPR.headRefName origin/$existingPR.headRefName
+            # Merge latest from base branch
+            git merge origin/$baseBranch --no-edit
         }
         catch {
             Write-Host "##[warning]Could not checkout existing branch, creating new one"
-            git checkout -b $branchName $baseBranch
+            git checkout -b $branchName origin/$baseBranch
         }
     } else {
         Write-Host "Creating new branch: $branchName"
-        git checkout -b $branchName $baseBranch
+        git checkout -b $branchName origin/$baseBranch
     }
     
     # Update the dependency in alm-config-defaults.psd1
     $configPath = "alm-config-defaults.psd1"
     $configContent = Get-Content $configPath -Raw
     
-    # Replace the version for this specific module
-    $pattern = "(`"$moduleName`"\s*=\s*`")$currentVersion(`")"
-    $replacement = "`${1}$latestVersion`${2}"
+    # Replace the version for this specific module - handle both single and double quotes
+    $pattern = "(`"$moduleName`"|'$moduleName')\s*=\s*(`"|')$currentVersion(`"|')"
+    $replacement = "`${1} = `"`$latestVersion`""
     $newContent = $configContent -replace $pattern, $replacement
     
     if ($configContent -eq $newContent) {
         Write-Host "##[warning]No changes made to config file for $moduleName"
+        # Return to base branch and continue
+        git checkout $baseBranch 2>$null || $true
         continue
     }
     
     Set-Content -Path $configPath -Value $newContent -NoNewline
+    
+    # Check if there are actual changes
+    $gitStatus = git status --porcelain
+    if (-not $gitStatus) {
+        Write-Host "##[warning]No git changes detected for $moduleName"
+        git checkout $baseBranch 2>$null || $true
+        continue
+    }
     
     # Commit and push
     git add $configPath
@@ -100,16 +122,26 @@ This PR updates the ``$moduleName`` PowerShell module dependency.
     
     if ($existingPR) {
         Write-Host "Updating existing PR #$($existingPR.number)"
-        gh pr edit $existingPR.number --title $prTitle --body $prBody
-        Write-Host "✓ Updated PR #$($existingPR.number)"
+        try {
+            gh pr edit $existingPR.number --title $prTitle --body $prBody
+            Write-Host "✓ Updated PR #$($existingPR.number)"
+        }
+        catch {
+            Write-Host "##[warning]Failed to update PR: $_"
+        }
     } else {
         Write-Host "Creating new PR"
-        $newPR = gh pr create --title $prTitle --body $prBody --base $baseBranch --head $branchName
-        Write-Host "✓ Created new PR: $newPR"
+        try {
+            $newPR = gh pr create --title $prTitle --body $prBody --base $baseBranch --head $branchName
+            Write-Host "✓ Created new PR: $newPR"
+        }
+        catch {
+            Write-Host "##[warning]Failed to create PR: $_"
+        }
     }
     
     # Return to base branch for next iteration
-    git checkout $baseBranch
+    git checkout $baseBranch 2>$null || $true
 }
 
 Write-Host "`nAll PRs created/updated successfully!"

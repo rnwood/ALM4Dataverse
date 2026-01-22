@@ -17,6 +17,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup PowerShell modules
+        shell: pwsh
+        run: |
+          # Install NuGet provider
+          Install-PackageProvider -Name NuGet -Force -Scope CurrentUser
+          # Register PSGallery if needed
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
+          
       - name: Check for outdated dependencies
         id: check
         shell: pwsh
