@@ -25,12 +25,28 @@ Features:
 
 ### Initial Setup
 
-- [Azure DevOps Organisation Requirements](docs/setup/azdo-organisation-requirements.md)
+- [Azure DevOps Organization Requirements](docs/setup/azdo-organisation-requirements.md)
 - [Automated Setup](docs/setup/automated-setup.md)
 - [Manual Setup](docs/setup/manual-setup.md)
 
+#### Usage Instructions
+
+- [Exporting changes](docs/usage/exporting-changes.md) - `EXPORT` pipeline
+  Capturing changes from your dev environments into source control.
+- [Building releases](docs/usage/building-releases.md) - `BUILD` pipeline
+  Generating release assets for later deployment.
+- [Deploying](docs/usage/deploying.md) -`DEPLOY-<branchname>` pipeline
+  Deploying release assets to environments in a controlled sequence
+- [Importing changes](docs/usage/importing-changes.md) - `IMPORT` pipeline
+  Seeding or updating dev environment from source control.
+
 ### Configuration Reference
 
-- [ALM Configuration (alm-config.psd1)](docs/config/alm-config.md)
+- [ALM Configuration](docs/config/alm-config.md) - `alm-config.psd1`
 - [Environment Variable Group](docs/config/environment-variable-group.md)
 - [Service Connection Configuration](docs/config/environment-service-connection.md)
+
+#### Example 'Hook' Extensions
+
+- [Data import and export](config/example-hooks/data-import-export.md) (for example config/system data)
+- [Organization/environment settings](config/example-hooks/organization-settings.md) (for example enabling the 'PCF allowed' switch)

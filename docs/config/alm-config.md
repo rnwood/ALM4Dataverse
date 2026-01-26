@@ -43,7 +43,16 @@ Paths are relative to the repository root. This is useful for including data mig
 
 ### Hooks
 
-Hook scripts are executed at various stages of the build, export, and deployment processes. Each hook is a list of script paths relative to the repository root.
+Hook scripts are executed at various stages of the build, export, and deployment processes and can be used to add custom steps. Each hook is a list of script paths relative to the repository root that will be executed at one stage of the standard process. 'Pre' hooks occur before the standard steps and 'post' hooks occur after.
+
+Scripts can use the built-in `Rnwood.Dataverse.Data.PowerShell` PowerShell module to complete a wide range of activities. [See the project site](https://github.com/rnwood/Rnwood.Dataverse.Data.PowerShell) for full documentation. The current environment is automatically set to the target environment.
+
+You can also include any other PowerShell module from the [PowerShell Gallery](https://powershellgallery.com) by including it in the `scriptDependencies` section. See below.
+
+Example hooks:
+
+- [Data import and export](example-hooks/data-import-export.md) (for example config/system data)
+- [Organization/environment settings](example-hooks/organization-settings.md) (for example enabling the 'PCF allowed' switch)- 
 
 ```powershell
 hooks = @{
@@ -64,7 +73,7 @@ hooks = @{
 - **preBuild**: Called before packing solutions during the build process
 - **postBuild**: Called after packing solutions and copying assets
 - **preDeploy**: Called before staging and importing solutions
-- **dataMigrations**: Called during deployment after solutions are staged but before upgrades. Use this for data migration scripts that need to move data before columns are removed
+- **dataMigrations**: Called during deployment after solutions are staged but before upgrades. Use this for data migration scripts that need to relocate data before columns are removed
 - **postDeploy**: Called after publish customizations
 
 #### Hook Context
