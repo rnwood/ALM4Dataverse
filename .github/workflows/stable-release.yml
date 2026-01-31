@@ -25,7 +25,11 @@ jobs:
       - name: Get Rnwood.Dataverse.Data.PowerShell version
         id: get_dataverse_version
         run: |
-          DATAVERSE_VERSION=$(grep -oP "Rnwood.Dataverse.Data.PowerShell\"\s*=\s*\"\K[^\"]*" alm-config-defaults.psd1)
+          # Use PowerShell to reliably read the version from the config file
+          DATAVERSE_VERSION=$(pwsh -Command "
+            \$config = Import-PowerShellDataFile -Path 'alm-config-defaults.psd1'
+            \$config.scriptDependencies.'Rnwood.Dataverse.Data.PowerShell'
+          ")
           echo "DATAVERSE_VERSION=$DATAVERSE_VERSION" >> $GITHUB_OUTPUT
           echo "Found Rnwood.Dataverse.Data.PowerShell version: $DATAVERSE_VERSION"
 
@@ -35,12 +39,16 @@ jobs:
           TAG_NAME="${{ steps.get_tag.outputs.TAG_NAME }}"
           DATAVERSE_VERSION="${{ steps.get_dataverse_version.outputs.DATAVERSE_VERSION }}"
           
+          # Define placeholders
+          ALM4DATAVERSE_REF_PLACEHOLDER="__ALM4DATAVERSE_REF__"
+          RNWOOD_DATAVERSE_VERSION_PLACEHOLDER="__RNWOOD_DATAVERSE_VERSION__"
+          
           # Create release directory
           mkdir -p release
           
           # Process setup.ps1 and replace placeholders
-          sed -e "s/__ALM4DATAVERSE_REF__/$TAG_NAME/g" \
-              -e "s/__RNWOOD_DATAVERSE_VERSION__/$DATAVERSE_VERSION/g" \
+          sed -e "s/${ALM4DATAVERSE_REF_PLACEHOLDER}/${TAG_NAME}/g" \
+              -e "s/${RNWOOD_DATAVERSE_VERSION_PLACEHOLDER}/${DATAVERSE_VERSION}/g" \
               setup.ps1 > release/setup.ps1
           
           echo "Processed setup.ps1 with:"
@@ -48,7 +56,7 @@ jobs:
           echo "  RNWOOD_DATAVERSE_VERSION: $DATAVERSE_VERSION"
           
           # Verify placeholders were replaced
-          if grep -q "__ALM4DATAVERSE_REF__\|__RNWOOD_DATAVERSE_VERSION__" release/setup.ps1; then
+          if grep -q "${ALM4DATAVERSE_REF_PLACEHOLDER}\|${RNWOOD_DATAVERSE_VERSION_PLACEHOLDER}" release/setup.ps1; then
             echo "ERROR: Placeholders were not fully replaced!"
             exit 1
           fi
