@@ -8,7 +8,7 @@ param(
     [switch]$UseDeviceAuthentication,
 
     [Parameter()]
-    [string]$ALM4DataverseRef = 'stable'
+    [string]$ALM4DataverseRef = '__ALM4DATAVERSE_REF__'
 )
 
 Set-StrictMode -Version Latest
@@ -17,6 +17,7 @@ $ProgressPreference = 'SilentlyContinue' # Suppress progress bars
 
 # This script is designed to be downloadable and self-contained.
 # It's therefore quite long, as it includes all necessary functions and logic.
+# Version numbers and ALM4Dataverse ref are injected during the release process.
 
 # Any changes must be also reflected in the docs/manual-setup.md file.
 
@@ -239,12 +240,11 @@ if (-not ($env:PSModulePath -split [Regex]::Escape($delim) | Where-Object { $_ -
 
 Write-Host "Using temp module root: $TempModuleRoot"
 
-$config = Import-PowerShellDataFile -Path (Join-Path $PSScriptRoot 'alm-config-defaults.psd1')
-
+# Version numbers are injected during release process
 $requiredModules = @{
     'VSTeam'                           = '7.15.2'
     'PSMenu'                           = '0.2.0'
-    'Rnwood.Dataverse.Data.PowerShell' = $config.scriptDependencies.'Rnwood.Dataverse.Data.PowerShell'
+    'Rnwood.Dataverse.Data.PowerShell' = '__RNWOOD_DATAVERSE_VERSION__'
 }
 
 # Ensure modules are downloaded before loading so we can patch them

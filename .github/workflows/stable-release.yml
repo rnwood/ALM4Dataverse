@@ -22,6 +22,39 @@ jobs:
         id: get_tag
         run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Get Rnwood.Dataverse.Data.PowerShell version
+        id: get_dataverse_version
+        run: |
+          DATAVERSE_VERSION=$(grep -oP "Rnwood.Dataverse.Data.PowerShell\"\s*=\s*\"\K[^\"]*" alm-config-defaults.psd1)
+          echo "DATAVERSE_VERSION=$DATAVERSE_VERSION" >> $GITHUB_OUTPUT
+          echo "Found Rnwood.Dataverse.Data.PowerShell version: $DATAVERSE_VERSION"
+
+      - name: Prepare setup.ps1 for release
+        id: prepare_setup
+        run: |
+          TAG_NAME="${{ steps.get_tag.outputs.TAG_NAME }}"
+          DATAVERSE_VERSION="${{ steps.get_dataverse_version.outputs.DATAVERSE_VERSION }}"
+          
+          # Create release directory
+          mkdir -p release
+          
+          # Process setup.ps1 and replace placeholders
+          sed -e "s/__ALM4DATAVERSE_REF__/$TAG_NAME/g" \
+              -e "s/__RNWOOD_DATAVERSE_VERSION__/$DATAVERSE_VERSION/g" \
+              setup.ps1 > release/setup.ps1
+          
+          echo "Processed setup.ps1 with:"
+          echo "  ALM4DATAVERSE_REF: $TAG_NAME"
+          echo "  RNWOOD_DATAVERSE_VERSION: $DATAVERSE_VERSION"
+          
+          # Verify placeholders were replaced
+          if grep -q "__ALM4DATAVERSE_REF__\|__RNWOOD_DATAVERSE_VERSION__" release/setup.ps1; then
+            echo "ERROR: Placeholders were not fully replaced!"
+            exit 1
+          fi
+          
+          echo "SETUP_FILE=release/setup.ps1" >> $GITHUB_OUTPUT
+
       - name: Update stable tag
         run: |
           git config user.name "github-actions[bot]"
@@ -75,6 +108,7 @@ jobs:
               : customNotes;
             
             // Create or update release
+            let releaseId;
             try {
               // Try to get existing release
               const { data: existingRelease } = await github.rest.repos.getReleaseByTag({
@@ -91,10 +125,11 @@ jobs:
                 body: body,
               });
               
+              releaseId = existingRelease.id;
               console.log('Updated existing release');
             } catch (error) {
               // Create new release
-              await github.rest.repos.createRelease({
+              const { data: newRelease } = await github.rest.repos.createRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 tag_name: tagName,
@@ -104,5 +139,42 @@ jobs:
                 prerelease: false,
               });
               
+              releaseId = newRelease.id;
               console.log('Created new release');
             }
+            
+            // Upload setup.ps1 as release asset
+            const setupFilePath = '${{ steps.prepare_setup.outputs.SETUP_FILE }}';
+            const setupFileContent = fs.readFileSync(setupFilePath);
+            
+            // First, delete any existing setup.ps1 asset
+            try {
+              const { data: assets } = await github.rest.repos.listReleaseAssets({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseId,
+              });
+              
+              const existingAsset = assets.find(asset => asset.name === 'setup.ps1');
+              if (existingAsset) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: existingAsset.id,
+                });
+                console.log('Deleted existing setup.ps1 asset');
+              }
+            } catch (error) {
+              console.warn('Could not check for existing asset:', error.message);
+            }
+            
+            // Upload new setup.ps1 asset
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              name: 'setup.ps1',
+              data: setupFileContent,
+            });
+            
+            console.log('Uploaded setup.ps1 as release asset');

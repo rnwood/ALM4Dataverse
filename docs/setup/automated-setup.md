@@ -53,10 +53,10 @@ The easiest way to run setup is:
 2) Paste this in and hit enter.
 
    ```powershell
-   iwr https://raw.githubusercontent.com/rnwood/ALM4Dataverse/refs/tags/stable/setup.ps1 | iex
+   iwr https://github.com/rnwood/ALM4Dataverse/releases/latest/download/setup.ps1 | iex
    ```
 
-   > If you would like to review the script first (good practice) you can download the script and save it from https://raw.githubusercontent.com/rnwood/ALM4Dataverse/refs/tags/stable/setup.ps1
+   > If you would like to review the script first (good practice) you can download the script and save it from https://github.com/rnwood/ALM4Dataverse/releases/latest/download/setup.ps1
 
 3) Follow the instructions.
 
