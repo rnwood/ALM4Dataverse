@@ -14,7 +14,8 @@ param(
 # ALM4DataverseRef default handling - injected during release, fallback for development
 if (-not $ALM4DataverseRef) {
     $injectedRef = '__ALM4DATAVERSE_REF__'
-    if ($injectedRef -eq '__ALM4DATAVERSE_REF__') {
+    # Check if placeholder was replaced by comparing if it starts with double underscore
+    if ($injectedRef -like '__*') {
         # Placeholders not replaced - must be running from repository for development
         Write-Host "Development mode: Using 'stable' as ALM4DataverseRef" -ForegroundColor Yellow
         $ALM4DataverseRef = 'stable'
@@ -256,7 +257,8 @@ Write-Host "Using temp module root: $TempModuleRoot"
 # Version numbers are injected during release process
 # For development/testing, fall back to reading from config file if placeholders are present
 $rnwoodDataverseVersion = '__RNWOOD_DATAVERSE_VERSION__'
-if ($rnwoodDataverseVersion -eq '__RNWOOD_DATAVERSE_VERSION__') {
+# Check if placeholder was replaced by comparing if it starts with double underscore
+if ($rnwoodDataverseVersion -like '__*') {
     # Placeholders not replaced - must be running from repository for development
     $configPath = Join-Path $PSScriptRoot 'alm-config-defaults.psd1'
     if (Test-Path $configPath) {
