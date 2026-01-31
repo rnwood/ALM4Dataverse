@@ -8,8 +8,21 @@ param(
     [switch]$UseDeviceAuthentication,
 
     [Parameter()]
-    [string]$ALM4DataverseRef = '__ALM4DATAVERSE_REF__'
+    [string]$ALM4DataverseRef
 )
+
+# ALM4DataverseRef default handling - injected during release, fallback for development
+if (-not $ALM4DataverseRef) {
+    $injectedRef = '__ALM4DATAVERSE_REF__'
+    if ($injectedRef -eq '__ALM4DATAVERSE_REF__') {
+        # Placeholders not replaced - must be running from repository for development
+        Write-Host "Development mode: Using 'stable' as ALM4DataverseRef" -ForegroundColor Yellow
+        $ALM4DataverseRef = 'stable'
+    } else {
+        # Placeholder was replaced during release - use the injected value
+        $ALM4DataverseRef = $injectedRef
+    }
+}
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -241,10 +254,24 @@ if (-not ($env:PSModulePath -split [Regex]::Escape($delim) | Where-Object { $_ -
 Write-Host "Using temp module root: $TempModuleRoot"
 
 # Version numbers are injected during release process
+# For development/testing, fall back to reading from config file if placeholders are present
+$rnwoodDataverseVersion = '__RNWOOD_DATAVERSE_VERSION__'
+if ($rnwoodDataverseVersion -eq '__RNWOOD_DATAVERSE_VERSION__') {
+    # Placeholders not replaced - must be running from repository for development
+    $configPath = Join-Path $PSScriptRoot 'alm-config-defaults.psd1'
+    if (Test-Path $configPath) {
+        Write-Host "Development mode: Reading version from $configPath" -ForegroundColor Yellow
+        $config = Import-PowerShellDataFile -Path $configPath
+        $rnwoodDataverseVersion = $config.scriptDependencies.'Rnwood.Dataverse.Data.PowerShell'
+    } else {
+        throw "This script appears to be running in development mode but alm-config-defaults.psd1 was not found at $configPath. Please download the released version from https://github.com/rnwood/ALM4Dataverse/releases/latest/download/setup.ps1"
+    }
+}
+
 $requiredModules = @{
     'VSTeam'                           = '7.15.2'
     'PSMenu'                           = '0.2.0'
-    'Rnwood.Dataverse.Data.PowerShell' = '__RNWOOD_DATAVERSE_VERSION__'
+    'Rnwood.Dataverse.Data.PowerShell' = $rnwoodDataverseVersion
 }
 
 # Ensure modules are downloaded before loading so we can patch them
