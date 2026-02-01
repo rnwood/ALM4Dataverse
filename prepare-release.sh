@@ -59,6 +59,13 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
+# Check if PowerShell is available
+if ! command -v pwsh &> /dev/null; then
+    echo "ERROR: PowerShell (pwsh) is not installed or not in PATH"
+    echo "Please install PowerShell from: https://github.com/PowerShell/PowerShell"
+    exit 1
+fi
+
 # Use PowerShell to reliably read the version from the config file
 DATAVERSE_VERSION=$(pwsh -Command "
   \$config = Import-PowerShellDataFile -Path '$CONFIG_FILE'

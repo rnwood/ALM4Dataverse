@@ -273,7 +273,7 @@ if ($rnwoodDataverseVersion -like '__*') {
 # Upstream repository URL is injected during release process
 # For development/testing, use local workspace path or fallback to GitHub
 $upstreamRepo = '__UPSTREAM_REPO__'
-# Check if placeholder was replaced by comparing if it starts with double underscore
+# Check if placeholder was replaced by comparing if it starts with double-underscore
 if ($upstreamRepo -like '__*') {
     # Placeholders not replaced - must be running from repository for development
     if ($PSScriptRoot) {
