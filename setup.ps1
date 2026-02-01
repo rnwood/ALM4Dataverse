@@ -2205,6 +2205,11 @@ function Get-PowerPlatformSCCredentials {
  
 
     # 4. Show Menu
+    Write-Host ""
+    Write-Host "Service Principal credentials are used to authenticate the pipeline to Dataverse." -ForegroundColor Green
+    Write-Host "Learn more: https://github.com/rnwood/ALM4Dataverse/tree/$ALM4DataverseRef/docs/config/environment-service-connection.md" -ForegroundColor Green
+    Write-Host ""
+    
     $selection = Select-FromMenu -Title "Select Service Principal credentials for '$EnvironmentName'" -Items $menuItems
     if ($null -eq $selection) { throw "No credential selected." }
 
@@ -2305,6 +2310,12 @@ function Get-DataverseServiceAccountUPN {
     }
 
     # Show Menu
+    Write-Host ""
+    Write-Host "Service Account credentials are used for ownership and licencing of Cloud Flows." -ForegroundColor Green
+    Write-Host "This must be a licenced user account with System Administrator role." -ForegroundColor Green
+    Write-Host "Learn more: https://github.com/rnwood/ALM4Dataverse/tree/$ALM4DataverseRef/docs/config/environment-service-connection.md" -ForegroundColor Green
+    Write-Host ""
+    
     $selection = Select-FromMenu -Title "Select Dataverse Service Account for '$EnvironmentName'" -Items $menuItems
     if ($null -eq $selection) { throw "No service account selected." }
 
@@ -3086,6 +3097,11 @@ function Get-DataverseEnvironmentsSelection {
             })
             
             foreach ($name in $existingNames) {
+                # Skip if we already have this environment (case-insensitive)
+                if ($selectedEnvironments | Where-Object { $_.ShortName -ieq $name }) {
+                    continue
+                }
+                
                 $ep = $endpoints | Where-Object { $_.name -eq $name } | Select-Object -First 1
                 if ($ep -and $ep.url) {
                     # Try to find matching Dataverse environment for FriendlyName
@@ -3143,7 +3159,7 @@ function Get-DataverseEnvironmentsSelection {
 
                     $url = $selectedEnv.Endpoints["WebApplication"]
 
-                    if ($selectedEnvironments | Where-Object { $_.Url -eq $url }) {
+                    if ($selectedEnvironments | Where-Object { $_.Url -ieq $url }) {
                         Write-Host "An environment with Url '$url' is already selected." -ForegroundColor Red
                         Start-Sleep -Seconds 2
                         continue
@@ -3158,8 +3174,8 @@ function Get-DataverseEnvironmentsSelection {
                         continue
                     }
  
-                    if ($selectedEnvironments | Where-Object { $_.ShortName -eq $shortName }) {
-                        Write-Host "An environment with short name '$shortName' is already selected." -ForegroundColor Red
+                    if ($selectedEnvironments | Where-Object { $_.ShortName -ieq $shortName }) {
+                        Write-Host "An environment with short name '$shortName' is already selected (case-insensitive match)." -ForegroundColor Red
                         Start-Sleep -Seconds 2
                         continue
                     }
@@ -3348,8 +3364,9 @@ if ($environments.Count -gt 0) {
 
     foreach ($env in $allEnvs) {
         Invoke-WithErrorHandling -OperationName "Configuring Service Connection for '$($env.ShortName)'" -ScriptBlock {
-            Write-Host "Configuring Service Connection for environment '$($env.ShortName)'..." -ForegroundColor Cyan
+            Write-Section "Configuring Service Connection for environment '$($env.ShortName)'"
             
+
             $script:creds = Get-PowerPlatformSCCredentials -ExistingCredentials $credentialsCache -TenantId $adoAuthResult.TenantId -ProjectName $selectedProject.Name -EnvironmentName $env.ShortName
             if ($credentialsCache -notcontains $script:creds) {
                 $script:credentialsCache += $script:creds
@@ -3368,7 +3385,7 @@ if ($environments.Count -gt 0) {
             }
 
             # Get Service Account UPN
-            Write-Host "Configuring Service Account for environment '$($env.ShortName)'..." -ForegroundColor Cyan
+            Write-Section "Configuring Service Account for environment '$($env.ShortName)'"
             $script:serviceAccountUPN = Get-DataverseServiceAccountUPN -ExistingServiceAccounts $serviceAccountsCache -EnvironmentName $env.ShortName -ExistingValue $existingServiceAccountUPN
             if ($serviceAccountsCache -notcontains $script:serviceAccountUPN) {
                 $script:serviceAccountsCache += $script:serviceAccountUPN
@@ -3404,6 +3421,7 @@ if ($environments.Count -gt 0) {
         } | Out-Null
 
         Invoke-WithErrorHandling -OperationName "Configuring Environment Resources for '$($env.ShortName)'" -ScriptBlock {
+           write-section "Configuring Environment Resources for '$($env.ShortName)'"
             # Ensure Environment resource exists and authorize pipeline
             if ($env.ShortName -ne "Dev-main") {
                 $azDoEnv = Ensure-AzDoEnvironment -Organization $orgName -Project $selectedProject.Name -EnvironmentName $env.ShortName -Description "Deployment environment for $($env.ShortName)"
@@ -3472,4 +3490,4 @@ Write-Host "Access your Azure DevOps project at" -ForegroundColor Green
 Write-Host "https://dev.azure.com/$orgName/$($selectedProject.Name)/_build" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Green
-Write-Host "https://github.com/rnwood/ALM4Dataverse/tree/stable#getting-started" -ForegroundColor Green
+Write-Host "https://github.com/rnwood/ALM4Dataverse/tree/$ALM4DataverseRef#getting-started" -ForegroundColor Green
