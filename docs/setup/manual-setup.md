@@ -63,21 +63,26 @@ You need two Git repositories in your project:
 This repository contains the shared pipeline templates and scripts.
 
 1. Go to **Repos** > **Files**
-2. Create a new repository named `ALM4Dataverse`
-3. Initialize it by importing from the latest release of this repository:
-   - Click "Import" under the repository dropdown
-   - Enter the clone URL: `https://github.com/rnwood/ALM4Dataverse.git`
-   - Click "Import"
-4. After import completes, configure the repository to use a specific release version:
-   - In your local development environment, clone the imported repository
-   - Fetch the tags: `git fetch --tags`
-   - Check out the desired release tag (e.g., for v1.0.0): `git checkout v1.0.0`
-   - Create/reset the main branch to this tag: `git branch -f main`
-   - Push to Azure DevOps: `git push origin main --force`
+2. Create a new repository named `ALM4Dataverse` (initialize as empty - do not import)
+3. Clone the newly created empty repository to your local machine
+4. Add the upstream repository and fetch the stable release:
+   ```bash
+   # Add the upstream repository as a remote
+   git remote add upstream https://github.com/rnwood/ALM4Dataverse.git
+   
+   # Fetch the stable tag
+   git fetch upstream stable
+   
+   # Create main branch from the stable tag
+   git checkout -b main upstream/stable
+   
+   # Push to your Azure DevOps repository
+   git push origin main
+   ```
 
-> **Important**: Using a tagged release ensures you're working with a tested, stable version. You can find available releases at https://github.com/rnwood/ALM4Dataverse/releases
+> **Note**: The 'stable' tag always points to the latest stable release. You can also use a specific version tag like `v1.0.0` instead of `stable` if you need to pin to a particular release. Find available releases at https://github.com/rnwood/ALM4Dataverse/releases
 
-📖 **Reference**: [Import a Git repo](https://learn.microsoft.com/en-us/azure/devops/repos/git/import-git-repository)
+📖 **Reference**: [Create a Git repo](https://learn.microsoft.com/en-us/azure/devops/repos/git/create-new-repo)
 
 ### 3.2 Main Repository (Your Application)
 
