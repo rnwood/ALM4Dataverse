@@ -66,10 +66,19 @@ if (-not (Test-Path $ConfigFile)) {
 # Use Import-PowerShellDataFile to reliably read the version
 try {
     $config = Import-PowerShellDataFile -Path $ConfigFile
+    
+    if (-not $config.ContainsKey('scriptDependencies')) {
+        throw "Config file is missing 'scriptDependencies' key"
+    }
+    
+    if (-not $config.scriptDependencies.ContainsKey('Rnwood.Dataverse.Data.PowerShell')) {
+        throw "Config file scriptDependencies is missing 'Rnwood.Dataverse.Data.PowerShell' key"
+    }
+    
     $DataverseVersion = $config.scriptDependencies.'Rnwood.Dataverse.Data.PowerShell'
     
     if ([string]::IsNullOrWhiteSpace($DataverseVersion)) {
-        throw "Version string is empty"
+        throw "Version string is empty or null"
     }
     
     Write-Host "  Found version: $DataverseVersion" -ForegroundColor Green
@@ -104,7 +113,14 @@ if (-not (Test-Path $OutputDir)) {
 $OutputFile = Join-Path $OutputDir 'setup.ps1'
 
 # Read the setup file
-$setupContent = Get-Content -Path $SetupFile -Raw
+try {
+    $setupContent = Get-Content -Path $SetupFile -Raw
+}
+catch {
+    Write-Host "ERROR: Could not read setup file: $SetupFile" -ForegroundColor Red
+    Write-Host "  Details: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
 
 # Replace placeholders
 $setupContent = $setupContent -replace [regex]::Escape($Alm4DataverseRefPlaceholder), $TagName
@@ -112,7 +128,14 @@ $setupContent = $setupContent -replace [regex]::Escape($RnwoodDataverseVersionPl
 $setupContent = $setupContent -replace [regex]::Escape($UpstreamRepoPlaceholder), $UpstreamRepo
 
 # Write to output file
-Set-Content -Path $OutputFile -Value $setupContent -NoNewline
+try {
+    Set-Content -Path $OutputFile -Value $setupContent -NoNewline
+}
+catch {
+    Write-Host "ERROR: Could not write to output file: $OutputFile" -ForegroundColor Red
+    Write-Host "  Details: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "  Processed setup.ps1 with:" -ForegroundColor Green
 Write-Host "    ALM4DATAVERSE_REF: $TagName"
