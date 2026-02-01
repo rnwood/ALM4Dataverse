@@ -49,11 +49,22 @@ jobs:
         run: |
           TAG_NAME="${{ steps.get_tag.outputs.TAG_NAME }}"
           
-          # Create release notes with link to getting started section
+          # Create release notes with automated setup command and links
           cat << EOF > release_notes.md
           ## Getting Started
           
-          📚 See the [Getting Started Guide](https://github.com/${{ github.repository }}/blob/${TAG_NAME}/README.md#getting-started) for instructions on how to use this release.
+          ### Automated Setup (Recommended)
+          
+          Run this command in Windows PowerShell to set up ALM4Dataverse for this release:
+          
+          \`\`\`powershell
+          iwr https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/setup.ps1 | iex
+          \`\`\`
+          
+          📚 **Documentation:**
+          - [Automated Setup Guide](https://github.com/${{ github.repository }}/blob/${TAG_NAME}/docs/setup/automated-setup.md) - Quick and easy setup using the script
+          - [Manual Setup Guide](https://github.com/${{ github.repository }}/blob/${TAG_NAME}/docs/setup/manual-setup.md) - Step-by-step manual configuration
+          - [Getting Started](https://github.com/${{ github.repository }}/blob/${TAG_NAME}/README.md#getting-started) - Overview and documentation
           EOF
           
           echo "RELEASE_NOTES_FILE=release_notes.md" >> $GITHUB_OUTPUT

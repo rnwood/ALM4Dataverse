@@ -64,9 +64,18 @@ This repository contains the shared pipeline templates and scripts.
 
 1. Go to **Repos** > **Files**
 2. Create a new repository named `ALM4Dataverse`
-3. Initialize it by importing from: `https://github.com/rnwood/ALM4Dataverse.git`
+3. Initialize it by importing from the latest release of this repository:
    - Click "Import" under the repository dropdown
-   - Enter the clone URL and click "Import"
+   - Enter the clone URL: `https://github.com/rnwood/ALM4Dataverse.git`
+   - Click "Import"
+4. After import completes, configure the repository to use a specific release version:
+   - In your local development environment, clone the imported repository
+   - Fetch the tags: `git fetch --tags`
+   - Check out the desired release tag (e.g., for v1.0.0): `git checkout v1.0.0`
+   - Create/reset the main branch to this tag: `git branch -f main`
+   - Push to Azure DevOps: `git push origin main --force`
+
+> **Important**: Using a tagged release ensures you're working with a tested, stable version. You can find available releases at https://github.com/rnwood/ALM4Dataverse/releases
 
 📖 **Reference**: [Import a Git repo](https://learn.microsoft.com/en-us/azure/devops/repos/git/import-git-repository)
 
