@@ -22,6 +22,17 @@ jobs:
         id: get_tag
         run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Prepare setup.ps1 for release
+        id: prepare_setup
+        run: |
+          TAG_NAME="${{ steps.get_tag.outputs.TAG_NAME }}"
+          UPSTREAM_REPO="https://github.com/${{ github.repository }}.git"
+          
+          # Use the prepare-release.ps1 script
+          pwsh -File prepare-release.ps1 -TagName "$TAG_NAME" -OutputDir release -UpstreamRepo "$UPSTREAM_REPO"
+          
+          echo "SETUP_FILE=release/setup.ps1" >> $GITHUB_OUTPUT
+
       - name: Update stable tag
         run: |
           git config user.name "github-actions[bot]"
@@ -38,11 +49,22 @@ jobs:
         run: |
           TAG_NAME="${{ steps.get_tag.outputs.TAG_NAME }}"
           
-          # Create release notes with link to getting started section
+          # Create release notes with automated setup command and links
           cat << EOF > release_notes.md
           ## Getting Started
           
-          📚 See the [Getting Started Guide](https://github.com/${{ github.repository }}/blob/${TAG_NAME}/README.md#getting-started) for instructions on how to use this release.
+          ### Automated Setup (Recommended)
+          
+          Run this command in Windows PowerShell to set up ALM4Dataverse for this release:
+          
+          \`\`\`powershell
+          iwr https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/setup.ps1 | iex
+          \`\`\`
+          
+          📚 **Documentation:**
+          - [Automated Setup Guide](https://github.com/${{ github.repository }}/blob/${TAG_NAME}/docs/setup/automated-setup.md) - Quick and easy setup using the script
+          - [Manual Setup Guide](https://github.com/${{ github.repository }}/blob/${TAG_NAME}/docs/setup/manual-setup.md) - Step-by-step manual configuration
+          - [Getting Started](https://github.com/${{ github.repository }}/blob/${TAG_NAME}/README.md#getting-started) - Overview and documentation
           EOF
           
           echo "RELEASE_NOTES_FILE=release_notes.md" >> $GITHUB_OUTPUT
@@ -75,6 +97,7 @@ jobs:
               : customNotes;
             
             // Create or update release
+            let releaseId;
             try {
               // Try to get existing release
               const { data: existingRelease } = await github.rest.repos.getReleaseByTag({
@@ -91,10 +114,11 @@ jobs:
                 body: body,
               });
               
+              releaseId = existingRelease.id;
               console.log('Updated existing release');
             } catch (error) {
               // Create new release
-              await github.rest.repos.createRelease({
+              const { data: newRelease } = await github.rest.repos.createRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 tag_name: tagName,
@@ -104,5 +128,42 @@ jobs:
                 prerelease: false,
               });
               
+              releaseId = newRelease.id;
               console.log('Created new release');
             }
+            
+            // Upload setup.ps1 as release asset
+            const setupFilePath = '${{ steps.prepare_setup.outputs.SETUP_FILE }}';
+            const setupFileContent = fs.readFileSync(setupFilePath);
+            
+            // First, delete any existing setup.ps1 asset
+            try {
+              const { data: assets } = await github.rest.repos.listReleaseAssets({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseId,
+              });
+              
+              const existingAsset = assets.find(asset => asset.name === 'setup.ps1');
+              if (existingAsset) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: existingAsset.id,
+                });
+                console.log('Deleted existing setup.ps1 asset');
+              }
+            } catch (error) {
+              console.warn('Could not check for existing asset:', error.message);
+            }
+            
+            // Upload new setup.ps1 asset
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              name: 'setup.ps1',
+              data: setupFileContent,
+            });
+            
+            console.log('Uploaded setup.ps1 as release asset');

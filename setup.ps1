@@ -8,8 +8,22 @@ param(
     [switch]$UseDeviceAuthentication,
 
     [Parameter()]
-    [string]$ALM4DataverseRef = 'stable'
+    [string]$ALM4DataverseRef
 )
+
+# ALM4DataverseRef default handling - injected during release, fallback for development
+if (-not $ALM4DataverseRef) {
+    $injectedRef = '__ALM4DATAVERSE_REF__'
+    # Check if placeholder was replaced by comparing if it starts with double underscore
+    if ($injectedRef -like '__*') {
+        # Placeholders not replaced - must be running from repository for development
+        Write-Host "Development mode: Using 'stable' as ALM4DataverseRef" -ForegroundColor Yellow
+        $ALM4DataverseRef = 'stable'
+    } else {
+        # Placeholder was replaced during release - use the injected value
+        $ALM4DataverseRef = $injectedRef
+    }
+}
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -17,6 +31,7 @@ $ProgressPreference = 'SilentlyContinue' # Suppress progress bars
 
 # This script is designed to be downloadable and self-contained.
 # It's therefore quite long, as it includes all necessary functions and logic.
+# Version numbers and ALM4Dataverse ref are injected during the release process.
 
 # Any changes must be also reflected in the docs/manual-setup.md file.
 
@@ -239,12 +254,41 @@ if (-not ($env:PSModulePath -split [Regex]::Escape($delim) | Where-Object { $_ -
 
 Write-Host "Using temp module root: $TempModuleRoot"
 
-$config = Import-PowerShellDataFile -Path (Join-Path $PSScriptRoot 'alm-config-defaults.psd1')
+# Version numbers are injected during release process
+# For development/testing, fall back to reading from config file if placeholders are present
+$rnwoodDataverseVersion = '__RNWOOD_DATAVERSE_VERSION__'
+# Check if placeholder was replaced by comparing if it starts with double underscore
+if ($rnwoodDataverseVersion -like '__*') {
+    # Placeholders not replaced - must be running from repository for development
+    $configPath = Join-Path $PSScriptRoot 'alm-config-defaults.psd1'
+    if (Test-Path $configPath) {
+        Write-Host "Development mode: Reading version from $configPath" -ForegroundColor Yellow
+        $config = Import-PowerShellDataFile -Path $configPath
+        $rnwoodDataverseVersion = $config.scriptDependencies.'Rnwood.Dataverse.Data.PowerShell'
+    } else {
+        throw "This script appears to be running in development mode but alm-config-defaults.psd1 was not found at $configPath. Please download the released version from https://github.com/rnwood/ALM4Dataverse/releases/latest/download/setup.ps1"
+    }
+}
+
+# Upstream repository URL is injected during release process
+# For development/testing, use local workspace path or fallback to GitHub
+$upstreamRepo = '__UPSTREAM_REPO__'
+# Check if placeholder was replaced by comparing if it starts with double-underscore
+if ($upstreamRepo -like '__*') {
+    # Placeholders not replaced - must be running from repository for development
+    if ($PSScriptRoot) {
+        Write-Host "Development mode: Using local workspace path as upstream repo" -ForegroundColor Yellow
+        $upstreamRepo = $PSScriptRoot
+    } else {
+        Write-Host "Development mode: Using default GitHub URL as upstream repo" -ForegroundColor Yellow
+        $upstreamRepo = 'https://github.com/rnwood/ALM4Dataverse.git'
+    }
+}
 
 $requiredModules = @{
     'VSTeam'                           = '7.15.2'
     'PSMenu'                           = '0.2.0'
-    'Rnwood.Dataverse.Data.PowerShell' = $config.scriptDependencies.'Rnwood.Dataverse.Data.PowerShell'
+    'Rnwood.Dataverse.Data.PowerShell' = $rnwoodDataverseVersion
 }
 
 # Ensure modules are downloaded before loading so we can patch them
@@ -796,7 +840,7 @@ $justInitialized = $false
 if (-not $hasCommits) {
     Write-Host "Repository '$sharedRepoName' has no commits. Seeding it from the upstream repo..." -ForegroundColor Yellow
 
-    $sharedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
+    $sharedSourceUrl = $upstreamRepo
     $destUrl = $repo.remoteUrl
     if (-not $destUrl) {
         throw "Could not determine remoteUrl for repository '$sharedRepoName'."
@@ -852,7 +896,7 @@ if (-not $hasCommits) {
 
 # Check if we can fast-forward from the shared repo (skip if just initialized)
 if (-not $justInitialized) {
-$sharedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
+$sharedSourceUrl = $upstreamRepo
 $destUrl = $repo.remoteUrl
 if (-not $destUrl) {
     throw "Could not determine remoteUrl for repository '$sharedRepoName'."

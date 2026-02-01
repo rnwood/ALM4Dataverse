@@ -19,6 +19,8 @@ Features:
 ## Getting Started
 
 1) [Run the automated setup process](docs/setup/automated-setup.md) to put in place the pipelines and other configuration needed.
+
+   Alternatively, if you prefer manual configuration, see the [Manual Setup Guide](docs/setup/manual-setup.md).
     
 
 ## Documentation

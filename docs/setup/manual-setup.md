@@ -63,12 +63,31 @@ You need two Git repositories in your project:
 This repository contains the shared pipeline templates and scripts.
 
 1. Go to **Repos** > **Files**
-2. Create a new repository named `ALM4Dataverse`
-3. Initialize it by importing from: `https://github.com/rnwood/ALM4Dataverse.git`
-   - Click "Import" under the repository dropdown
-   - Enter the clone URL and click "Import"
+2. Create a new repository named `ALM4Dataverse` (initialize as empty - do not import)
+3. Copy the clone URL from Azure DevOps (click "Clone" button in the top right)
+4. Clone the repository and set it up with the stable release:
+   ```bash
+   # Clone your newly created empty repository
+   # Replace YOUR_CLONE_URL with the URL you copied from Azure DevOps
+   git clone YOUR_CLONE_URL
+   cd ALM4Dataverse
+   
+   # Add the upstream repository as a remote
+   git remote add upstream https://github.com/rnwood/ALM4Dataverse.git
+   
+   # Fetch the stable tag
+   git fetch upstream stable
+   
+   # Create main branch from the stable tag
+   git checkout -b main upstream/stable
+   
+   # Push to your Azure DevOps repository
+   git push origin main
+   ```
 
-📖 **Reference**: [Import a Git repo](https://learn.microsoft.com/en-us/azure/devops/repos/git/import-git-repository)
+> **Note**: The 'stable' tag always points to the latest stable release. You can also use a specific version tag like `v1.0.0` instead of `stable` if you need to pin to a particular release. Find available releases at https://github.com/rnwood/ALM4Dataverse/releases
+
+📖 **Reference**: [Create a Git repo](https://learn.microsoft.com/en-us/azure/devops/repos/git/create-new-repo)
 
 ### 3.2 Main Repository (Your Application)
 
