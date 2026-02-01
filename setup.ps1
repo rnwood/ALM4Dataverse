@@ -326,6 +326,71 @@ Write-Host "Version: $(git --version)"
 
 #region Authentication
 
+function Invoke-WithErrorHandling {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][scriptblock]$ScriptBlock,
+        [Parameter(Mandatory)][string]$OperationName,
+        [Parameter()][switch]$AllowSkip
+    )
+
+    while ($true) {
+        try {
+            # Execute the script block and return its result
+            return & $ScriptBlock
+        }
+        catch {
+            Write-Host "`n" -NoNewline
+            Write-Host "ERROR in $OperationName" -ForegroundColor Red -BackgroundColor Black
+            Write-Host "="*80 -ForegroundColor Red
+            Write-Host "Error Type: $($_.Exception.GetType().Name)" -ForegroundColor Yellow
+            Write-Host "Error Message: $($_.Exception.Message)" -ForegroundColor Yellow
+            
+            if ($_.ScriptStackTrace) {
+                Write-Host "`nStack Trace:" -ForegroundColor DarkGray
+                Write-Host $_.ScriptStackTrace -ForegroundColor DarkGray
+            }
+            
+            if ($_.InvocationInfo.PositionMessage) {
+                Write-Host "`nLocation:" -ForegroundColor DarkGray
+                Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor DarkGray
+            }
+            
+            Write-Host "="*80 -ForegroundColor Red
+            Write-Host ""
+
+            # Build menu options
+            $options = @('Retry')
+            if ($AllowSkip) {
+                $options += 'Skip (Not Recommended)'
+            }
+            $options += 'Abort Setup'
+
+            $choice = Select-FromMenu -Title "How would you like to proceed?" -Items $options
+            
+            if ($null -eq $choice) {
+                Write-Host "Setup aborted by user." -ForegroundColor Yellow
+                throw "Setup aborted by user."
+            }
+
+            switch ($options[$choice]) {
+                'Retry' {
+                    Write-Host "Retrying $OperationName..." -ForegroundColor Cyan
+                    continue
+                }
+                'Skip (Not Recommended)' {
+                    Write-Host "Skipping $OperationName. This may cause issues later." -ForegroundColor Yellow
+                    return $null
+                }
+                'Abort Setup' {
+                    Write-Host "Setup aborted by user." -ForegroundColor Yellow
+                    throw "Setup aborted by user after error in $OperationName"
+                }
+            }
+        }
+    }
+}
+
 function Get-AuthToken {
     param(
         [Parameter(Mandatory)][string]$ResourceUrl,
@@ -450,12 +515,18 @@ Read-Host "Press Enter to open browser for authentication..."
 
 # Azure DevOps resource for AAD token acquisition.
 $adoResourceUrl = '499b84ac-1321-427f-aa17-267ca6975798'
-$adoAuthResult = Get-AuthToken -ResourceUrl $adoResourceUrl -TenantId $TenantId
 
-if (-not $adoAuthResult -or -not $adoAuthResult.AccessToken) {
-    throw "Failed to acquire an Azure DevOps access token."
+$authResult = Invoke-WithErrorHandling -OperationName "Authentication" -ScriptBlock {
+    $result = Get-AuthToken -ResourceUrl $adoResourceUrl -TenantId $TenantId
+    
+    if (-not $result -or -not $result.AccessToken) {
+        throw "Failed to acquire an Azure DevOps access token."
+    }
+    
+    return $result
 }
 
+$adoAuthResult = $authResult
 $adoAccessToken = [pscustomobject]@{ Token = $adoAuthResult.AccessToken }
 $secureToken = ConvertTo-SecureString -String $adoAccessToken.Token -AsPlainText -Force
 
@@ -654,7 +725,7 @@ function Wait-AzDoGitRepositoryImport {
 Write-Section "Select Azure DevOps organization"
 
 # Use direct REST API to get organizations (VSTeam requires an org to connect to first)
-try {
+$orgData = Invoke-WithErrorHandling -OperationName "Discovering Azure DevOps Organizations" -ScriptBlock {
     $headers = @{
         Authorization = "Bearer $($adoAccessToken.Token)"
     }
@@ -682,11 +753,15 @@ try {
 
     $orgsSorted = $orgs | Sort-Object -Property accountName
     $orgNames = @($orgsSorted | ForEach-Object { $_.accountName })
+    
+    return @{
+        Orgs = $orgsSorted
+        OrgNames = $orgNames
+    }
 }
-catch {
-    Write-Host "Failed to discover organizations: $($_.Exception.Message)" -ForegroundColor Red
-    throw
-}
+
+$orgsSorted = $orgData.Orgs
+$orgNames = $orgData.OrgNames
 
 $orgIndex = 0
 $orgIndex = Select-FromMenu -Title "Select an Azure DevOps organization" -Items $orgNames
@@ -709,7 +784,7 @@ Write-Host "VSTeam configured for organization '$orgName' using a bearer token."
 Write-Section "Ensuring Needed Extensions are Enabled"
 
 $requiredExtension = "microsoft-IsvExpTools.PowerPlatform-BuildTools"
-try {
+Invoke-WithErrorHandling -OperationName "Installing Power Platform Build Tools Extension" -ScriptBlock {
     # Check if the extension is already installed
     $installedExtensions = Get-VSTeamExtension
     $ppBuildTools = $installedExtensions | Where-Object { $_.publisherId -eq "microsoft-IsvExpTools" -and $_.extensionId -eq "PowerPlatform-BuildTools" }
@@ -722,6 +797,7 @@ try {
             throw "Power Platform Build Tools extension is required. Setup cannot continue without it."
         }
         Write-Host "Power Platform Build Tools extension not found. Installing..." -ForegroundColor Yellow
+        Write-Host "This may require organization administrative permissions." -ForegroundColor Yellow
         
         # Install the extension
         Install-VSTeamExtension -PublisherId "microsoft-IsvExpTools" -ExtensionId "PowerPlatform-BuildTools"
@@ -734,17 +810,12 @@ try {
             Write-Host "Power Platform Build Tools extension installed successfully (Version: $($ppBuildTools.version))."
         }
         else {
+            Write-Host "Please install the extension manually from:" -ForegroundColor Yellow
+            Write-Host "https://marketplace.visualstudio.com/acquisition?itemName=microsoft-IsvExpTools.PowerPlatform-BuildTools" -ForegroundColor Yellow
             throw "Failed to verify Power Platform Build Tools extension installation after install command completed."
         }
     }
-}
-catch {
-    Write-Host "Error installing Power Platform Build Tools extension: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "This may be due to insufficient permissions to manage extensions in the organization." -ForegroundColor Yellow
-    Write-Host "Please ensure you have AzDO organization administrative rights or ask your admin to install the extension manually from the Azure DevOps marketplace:" -ForegroundColor Yellow
-    Write-Host "https://marketplace.visualstudio.com/acquisition?itemName=microsoft-IsvExpTools.PowerPlatform-BuildTools"
-    throw
-}
+} | Out-Null
 
 Write-Section "Select target Azure DevOps Project"
 
@@ -838,59 +909,57 @@ Write-Section "Creating/updating shared repository '$sharedRepoName'"
 $hasCommits = Test-AzDoGitRepositoryHasCommits -Organization $orgName -Project $selectedProject.Name -RepositoryId $repo.Id
 $justInitialized = $false
 if (-not $hasCommits) {
-    Write-Host "Repository '$sharedRepoName' has no commits. Seeding it from the upstream repo..." -ForegroundColor Yellow
+    $justInitialized = Invoke-WithErrorHandling -OperationName "Initializing Shared Repository" -ScriptBlock {
+        Write-Host "Repository '$sharedRepoName' has no commits. Seeding it from the upstream repo..." -ForegroundColor Yellow
 
-    $sharedSourceUrl = $upstreamRepo
-    $destUrl = $repo.remoteUrl
-    if (-not $destUrl) {
-        throw "Could not determine remoteUrl for repository '$sharedRepoName'."
-    }
-
-    # Create a temp folder for initializing the repo
-    $workRoot = Join-Path $env:TEMP ("ALM4Dataverse-Init-" + [guid]::NewGuid().ToString('n'))
-    New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
-
-    try {
-        Push-Location $workRoot
-
-        # Initialize and pull from upstream
-        & git init --initial-branch=main | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Git init failed with exit code $LASTEXITCODE" }
-
-        & git remote add origin $sharedSourceUrl | Out-Null
-        & git fetch origin | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Git fetch failed with exit code $LASTEXITCODE" }
-
-        # Determine the target ref
-        $targetRef = "origin/$ALM4DataverseRef"
-        & git rev-parse --verify --quiet $targetRef | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            $targetRef = $ALM4DataverseRef
-            & git rev-parse --verify --quiet $targetRef | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                throw "Could not resolve reference '$ALM4DataverseRef' from upstream repository."
-            }
+        $sharedSourceUrl = $upstreamRepo
+        $destUrl = $repo.remoteUrl
+        if (-not $destUrl) {
+            throw "Could not determine remoteUrl for repository '$sharedRepoName'."
         }
 
-        # Checkout the target ref as main branch
-        & git checkout -b main $targetRef | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Git checkout failed with exit code $LASTEXITCODE" }
+        # Create a temp folder for initializing the repo
+        $workRoot = Join-Path $env:TEMP ("ALM4Dataverse-Init-" + [guid]::NewGuid().ToString('n'))
+        New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
 
-        # Push to Azure DevOps
-        & git remote set-url origin $destUrl | Out-Null
-        & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push -u origin main
-        if ($LASTEXITCODE -ne 0) { throw "Git push failed with exit code $LASTEXITCODE" }
+        try {
+            Push-Location $workRoot
 
-        Write-Host "Shared repository initialized successfully."
-        $justInitialized = $true
-    }
-    catch {
-        Write-Host "Repository initialization failed: $($_.Exception.Message)" -ForegroundColor Red
-        throw
-    }
-    finally {
-        if ((Get-Location).Path -eq $workRoot) { Pop-Location }
-        try { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+            # Initialize and pull from upstream
+            & git init --initial-branch=main | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Git init failed with exit code $LASTEXITCODE" }
+
+            & git remote add origin $sharedSourceUrl | Out-Null
+            & git fetch origin | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Git fetch failed with exit code $LASTEXITCODE" }
+
+            # Determine the target ref
+            $targetRef = "origin/$ALM4DataverseRef"
+            & git rev-parse --verify --quiet $targetRef | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $targetRef = $ALM4DataverseRef
+                & git rev-parse --verify --quiet $targetRef | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Could not resolve reference '$ALM4DataverseRef' from upstream repository."
+                }
+            }
+
+            # Checkout the target ref as main branch
+            & git checkout -b main $targetRef | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Git checkout failed with exit code $LASTEXITCODE" }
+
+            # Push to Azure DevOps
+            & git remote set-url origin $destUrl | Out-Null
+            & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" push -u origin main
+            if ($LASTEXITCODE -ne 0) { throw "Git push failed with exit code $LASTEXITCODE" }
+
+            Write-Host "Shared repository initialized successfully."
+            return $true
+        }
+        finally {
+            if ((Get-Location).Path -eq $workRoot) { Pop-Location }
+            try { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+        }
     }
 }
 
@@ -2376,87 +2445,97 @@ Write-Section "Ensuring environment variable group"
 
 # Create the environment variable group only if it doesn't exist.
 # This seeds example values that you can later replace with your real connection reference ids / environment variable values.
-[void](Ensure-AzDoVariableGroupExists `
-        -Organization $orgName `
-        -Project $selectedProject.Name `
-        -ProjectId $selectedProject.Id `
-        -GroupName 'Environment-Dev-main' `
-        -Variables @{
-        'DATAVERSECONNREF_example_uniquename' = 'connectionid'
-        'DATAVERSEENVVAR_example_uniquename'  = 'value'
-    })
+Invoke-WithErrorHandling -OperationName "Creating Environment Variable Group" -ScriptBlock {
+    [void](Ensure-AzDoVariableGroupExists `
+            -Organization $orgName `
+            -Project $selectedProject.Name `
+            -ProjectId $selectedProject.Id `
+            -GroupName 'Environment-Dev-main' `
+            -Variables @{
+            'DATAVERSECONNREF_example_uniquename' = 'connectionid'
+            'DATAVERSEENVVAR_example_uniquename'  = 'value'
+        })
+} | Out-Null
 
 $mainRepo = Select-AzDoMainRepository -ProjectName $selectedProject.Name -SharedRepositoryName $sharedRepoName
 
-# Determine copy-to-your-repo folder location
-# When running from a file, use PSScriptRoot. When downloaded and run via iex, clone the shared repo.
-if ($PSScriptRoot) {
-    # Running from a file - use local path
-    $copyRoot = Join-Path $PSScriptRoot 'copy-to-your-repo'
-    Sync-CopyToYourRepoIntoGitRepo -SourceRoot $copyRoot -TargetRepo $mainRepo -PreferredBranch 'main'
-}
-else {
-    # Running via iex (no PSScriptRoot) - clone the shared repo to get copy-to-your-repo
-    $sharedRepoClone = Join-Path $env:TEMP ("ALM4Dataverse-SharedRepo-" + [guid]::NewGuid().ToString('n'))
-    New-Item -ItemType Directory -Path $sharedRepoClone -Force | Out-Null
-    
-    try {
-        Write-Host "Cloning shared repository to get template files..." -ForegroundColor Yellow
-        & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" clone $repo.remoteUrl $sharedRepoClone
-        if ($LASTEXITCODE -ne 0) {
-            throw "Git clone of shared repository failed with exit code $LASTEXITCODE"
-        }
-        
-        $copyRoot = Join-Path $sharedRepoClone 'copy-to-your-repo'
+Invoke-WithErrorHandling -OperationName "Syncing Pipeline Files to Main Repository" -ScriptBlock {
+    # Determine copy-to-your-repo folder location
+    # When running from a file, use PSScriptRoot. When downloaded and run via iex, clone the shared repo.
+    if ($PSScriptRoot) {
+        # Running from a file - use local path
+        $copyRoot = Join-Path $PSScriptRoot 'copy-to-your-repo'
         Sync-CopyToYourRepoIntoGitRepo -SourceRoot $copyRoot -TargetRepo $mainRepo -PreferredBranch 'main'
     }
-    finally {
-        # Clean up the temporary clone
-        if (Test-Path $sharedRepoClone) {
-            Remove-Item -LiteralPath $sharedRepoClone -Recurse -Force -ErrorAction SilentlyContinue
+    else {
+        # Running via iex (no PSScriptRoot) - clone the shared repo to get copy-to-your-repo
+        $sharedRepoClone = Join-Path $env:TEMP ("ALM4Dataverse-SharedRepo-" + [guid]::NewGuid().ToString('n'))
+        New-Item -ItemType Directory -Path $sharedRepoClone -Force | Out-Null
+        
+        try {
+            Write-Host "Cloning shared repository to get template files..." -ForegroundColor Yellow
+            & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" clone $repo.remoteUrl $sharedRepoClone
+            if ($LASTEXITCODE -ne 0) {
+                throw "Git clone of shared repository failed with exit code $LASTEXITCODE"
+            }
+            
+            $copyRoot = Join-Path $sharedRepoClone 'copy-to-your-repo'
+            Sync-CopyToYourRepoIntoGitRepo -SourceRoot $copyRoot -TargetRepo $mainRepo -PreferredBranch 'main'
+        }
+        finally {
+            # Clean up the temporary clone
+            if (Test-Path $sharedRepoClone) {
+                Remove-Item -LiteralPath $sharedRepoClone -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
-}
+} | Out-Null
 
-Write-Section "Ensuring Build Service has Contribute on main repo"
-Ensure-AzDoBuildServiceHasContributeOnRepo -Organization $orgName -ProjectName $selectedProject.Name -ProjectId $selectedProject.Id -RepositoryId $mainRepo.Id
+Invoke-WithErrorHandling -OperationName "Setting Up Build Service Permissions" -ScriptBlock {
+    Write-Section "Ensuring Build Service has Contribute on main repo"
+    Ensure-AzDoBuildServiceHasContributeOnRepo -Organization $orgName -ProjectName $selectedProject.Name -ProjectId $selectedProject.Id -RepositoryId $mainRepo.Id
+} | Out-Null
 
-# Create/ensure actual Azure DevOps pipelines that point at the YAML files we just synced.
-$mainRepoBranch = 'main'
-if ($mainRepo.defaultBranch) {
-    $mainRepoBranch = ConvertFrom-GitRefToBranchName -Ref $mainRepo.defaultBranch
-}
-
-$yamlFiles = @(
-    'pipelines/BUILD.yml',
-    "pipelines/DEPLOY-$mainRepoBranch.yml",
-    'pipelines/EXPORT.yml',
-    'pipelines/IMPORT.yml'
-)
-
-Ensure-AzDoPipelinesForMainRepo -Organization $orgName -Project $selectedProject.Name -Repository $mainRepo -YamlFiles $yamlFiles -FolderPath "\$($mainRepo.Name)"
-
-# Authorize pipelines for repositories
-Write-Section "Authorizing pipelines for repositories"
-$pipelineNames = $yamlFiles | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_) }
-
-# Get all pipelines once to avoid multiple calls
-$allPipelines = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name
-$pipelineFolder = "\$($mainRepo.Name)"
-
-foreach ($name in $pipelineNames) {
-    $pipeline = $allPipelines | Where-Object { $_.name -eq $name -and $_.path -eq $pipelineFolder } | Select-Object -First 1
-    
-    if ($pipeline) {
-        # Authorize Main Repo
-        $mainRepoResourceId = "$($selectedProject.Id).$($mainRepo.Id)"
-        Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'repository' -ResourceId $mainRepoResourceId -PipelineId $pipeline.id
-
-        # Authorize Shared Repo
-        $sharedRepoResourceId = "$($selectedProject.Id).$($repo.Id)"
-        Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'repository' -ResourceId $sharedRepoResourceId -PipelineId $pipeline.id
+Invoke-WithErrorHandling -OperationName "Creating Pipeline Definitions" -ScriptBlock {
+    # Create/ensure actual Azure DevOps pipelines that point at the YAML files we just synced.
+    $script:mainRepoBranch = 'main'
+    if ($mainRepo.defaultBranch) {
+        $script:mainRepoBranch = ConvertFrom-GitRefToBranchName -Ref $mainRepo.defaultBranch
     }
-}
+
+    $script:yamlFiles = @(
+        'pipelines/BUILD.yml',
+        "pipelines/DEPLOY-$script:mainRepoBranch.yml",
+        'pipelines/EXPORT.yml',
+        'pipelines/IMPORT.yml'
+    )
+
+    Ensure-AzDoPipelinesForMainRepo -Organization $orgName -Project $selectedProject.Name -Repository $mainRepo -YamlFiles $script:yamlFiles -FolderPath "\$($mainRepo.Name)"
+} | Out-Null
+
+Invoke-WithErrorHandling -OperationName "Authorizing Pipelines for Repositories" -AllowSkip -ScriptBlock {
+    # Authorize pipelines for repositories
+    Write-Section "Authorizing pipelines for repositories"
+    $pipelineNames = $yamlFiles | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_) }
+
+    # Get all pipelines once to avoid multiple calls
+    $allPipelines = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name
+    $pipelineFolder = "\$($mainRepo.Name)"
+
+    foreach ($name in $pipelineNames) {
+        $pipeline = $allPipelines | Where-Object { $_.name -eq $name -and $_.path -eq $pipelineFolder } | Select-Object -First 1
+        
+        if ($pipeline) {
+            # Authorize Main Repo
+            $mainRepoResourceId = "$($selectedProject.Id).$($mainRepo.Id)"
+            Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'repository' -ResourceId $mainRepoResourceId -PipelineId $pipeline.id
+
+            # Authorize Shared Repo
+            $sharedRepoResourceId = "$($selectedProject.Id).$($repo.Id)"
+            Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'repository' -ResourceId $sharedRepoResourceId -PipelineId $pipeline.id
+        }
+    }
+} | Out-Null
 
 #endregion
 
@@ -3217,34 +3296,44 @@ function Update-DeployPipelineInMainRepo {
 
 Write-Section "Selecting Dataverse solution(s) to manage"
 
-$result = Get-DataverseSolutionsSelection -MainRepo $mainRepo
-$solutions = $result.Solutions
-$devEnvUrl = $result.EnvironmentUrl
+$solutionData = Invoke-WithErrorHandling -OperationName "Selecting Dataverse Solutions" -ScriptBlock {
+    $result = Get-DataverseSolutionsSelection -MainRepo $mainRepo
+    return $result
+}
+
+$solutions = $solutionData.Solutions
+$devEnvUrl = $solutionData.EnvironmentUrl
 
 if ($solutions.Count -gt 0) {
-    # Update alm-config.psd1 in the main repository and commit the changes
-    $configUpdated = Update-AlmConfigInMainRepo -Solutions $solutions -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
-    if ($configUpdated) {
-        Write-Host "Updated alm-config.psd1 with $($solutions.Count) solution(s) in main repository."
-    }
+    Invoke-WithErrorHandling -OperationName "Updating alm-config.psd1 with Solutions" -AllowSkip -ScriptBlock {
+        # Update alm-config.psd1 in the main repository and commit the changes
+        $configUpdated = Update-AlmConfigInMainRepo -Solutions $solutions -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
+        if ($configUpdated) {
+            Write-Host "Updated alm-config.psd1 with $($solutions.Count) solution(s) in main repository."
+        }
+    } | Out-Null
 }
 
 Write-Section "Selecting Deployment Environments"
 
 write-host "Select Dataverse environments to deploy to in the required order" -ForegroundColor Green
 
-$environments = Get-DataverseEnvironmentsSelection -ExcludedUrl $devEnvUrl -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken -ProjectName $selectedProject.Name
+$environments = Invoke-WithErrorHandling -OperationName "Selecting Deployment Environments" -ScriptBlock {
+    return Get-DataverseEnvironmentsSelection -ExcludedUrl $devEnvUrl -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken -ProjectName $selectedProject.Name
+}
 
 if ($environments.Count -gt 0) {
-    Update-DeployPipelineInMainRepo -Environments $environments -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
+    Invoke-WithErrorHandling -OperationName "Updating Deployment Pipeline" -AllowSkip -ScriptBlock {
+        Update-DeployPipelineInMainRepo -Environments $environments -MainRepo $mainRepo -AccessToken $azDevOpsAccessToken
+    } | Out-Null
 
     # Get pipeline IDs for authorization
     $pipelineFolder = "\$($mainRepo.Name)"
     $exportPipeline = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name | Where-Object { $_.name -eq 'EXPORT' -and $_.path -eq $pipelineFolder } | Select-Object -First 1
-    $deployPipeline = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name | Where-Object { $_.name -eq "DEPLOY-$mainRepoBranch" -and $_.path -eq $pipelineFolder } | Select-Object -First 1
+    $deployPipeline = Get-VSTeamBuildDefinition -ProjectName $selectedProject.Name | Where-Object { $_.name -eq "DEPLOY-$script:mainRepoBranch" -and $_.path -eq $pipelineFolder } | Select-Object -First 1
 
     if (-not $exportPipeline) { Write-Warning "EXPORT pipeline not found. Skipping authorization." }
-    if (-not $deployPipeline) { Write-Warning "DEPLOY-$mainRepoBranch pipeline not found. Skipping authorization." }
+    if (-not $deployPipeline) { Write-Warning "DEPLOY-$script:mainRepoBranch pipeline not found. Skipping authorization." }
 
     $credentialsCache = @()
     $serviceAccountsCache = @()
@@ -3258,115 +3347,119 @@ if ($environments.Count -gt 0) {
     $allEnvs += $environments
 
     foreach ($env in $allEnvs) {
-        Write-Host "Configuring Service Connection for environment '$($env.ShortName)'..." -ForegroundColor Cyan
-        
-        $creds = Get-PowerPlatformSCCredentials -ExistingCredentials $credentialsCache -TenantId $adoAuthResult.TenantId -ProjectName $selectedProject.Name -EnvironmentName $env.ShortName
-        if ($credentialsCache -notcontains $creds) {
-            $credentialsCache += $creds
-        }
-
-        # Check for existing service account UPN in variable group
-        $existingServiceAccountUPN = $null
-        try {
-            $existingVarGroup = Get-VSTeamVariableGroup -ProjectName $selectedProject.Name -Name "Environment-$($env.ShortName)" -ErrorAction SilentlyContinue
-            if ($existingVarGroup -and $existingVarGroup.variables -and $existingVarGroup.variables.PSObject.Properties.Name -contains 'DataverseServiceAccountUPN') {
-                $existingServiceAccountUPN = $existingVarGroup.variables.DataverseServiceAccountUPN.value
-            }
-        }
-        catch {
-            # Ignore errors checking for existing value
-        }
-
-        # Get Service Account UPN
-        Write-Host "Configuring Service Account for environment '$($env.ShortName)'..." -ForegroundColor Cyan
-        $serviceAccountUPN = Get-DataverseServiceAccountUPN -ExistingServiceAccounts $serviceAccountsCache -EnvironmentName $env.ShortName -ExistingValue $existingServiceAccountUPN
-        if ($serviceAccountsCache -notcontains $serviceAccountUPN) {
-            $serviceAccountsCache += $serviceAccountUPN
-        }
-        
-        $endpoint = $null
-        if (-not $creds.IsExistingServiceConnection) {
-            $endpoint = Ensure-AzDoServiceEndpoint `
-                -ProjectName $selectedProject.Name `
-                -ServiceEndpointName $env.ShortName `
-                -EnvironmentUrl $env.Url `
-                -ApplicationId $creds.ApplicationId `
-                -ClientSecret $creds.ClientSecret `
-                -TenantId $creds.TenantId
-        } else {
-             # If it is existing, we need to fetch it to get the ID
-             $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $selectedProject.Name -ErrorAction SilentlyContinue)
-             $endpoint = $endpoints | Where-Object { $_.name -eq $env.ShortName } | Select-Object -First 1
-        }
-
-        # Authorize pipeline for Service Connection
-        if ($endpoint -and $endpoint.id) {
-            if ($env.ShortName -eq "Dev-main") {
-                if ($exportPipeline) {
-                    Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'endpoint' -ResourceId $endpoint.id -PipelineId $exportPipeline.id
-                }
-            } else {
-                if ($deployPipeline) {
-                    Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'endpoint' -ResourceId $endpoint.id -PipelineId $deployPipeline.id
-                }
-            }
-        }
-
-        # Ensure Environment resource exists and authorize pipeline
-        if ($env.ShortName -ne "Dev-main") {
-            $azDoEnv = Ensure-AzDoEnvironment -Organization $orgName -Project $selectedProject.Name -EnvironmentName $env.ShortName -Description "Deployment environment for $($env.ShortName)"
+        Invoke-WithErrorHandling -OperationName "Configuring Service Connection for '$($env.ShortName)'" -ScriptBlock {
+            Write-Host "Configuring Service Connection for environment '$($env.ShortName)'..." -ForegroundColor Cyan
             
-            if ($azDoEnv -and $deployPipeline) {
-                Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'environment' -ResourceId $azDoEnv.id -PipelineId $deployPipeline.id
+            $script:creds = Get-PowerPlatformSCCredentials -ExistingCredentials $credentialsCache -TenantId $adoAuthResult.TenantId -ProjectName $selectedProject.Name -EnvironmentName $env.ShortName
+            if ($credentialsCache -notcontains $script:creds) {
+                $script:credentialsCache += $script:creds
             }
-        }
 
-        Ensure-DataverseApplicationUser `
-            -EnvironmentUrl $env.Url `
-            -ApplicationId $creds.ApplicationId `
-            -TenantId $creds.TenantId
-
-        # Ensure Service Account has System Administrator role
-        Ensure-DataverseServiceAccountUser `
-            -EnvironmentUrl $env.Url `
-            -ServiceAccountUPN $serviceAccountUPN `
-            -TenantId $creds.TenantId
-
-        $varGroup = $null
-        # Variable group for Dev is already created earlier, but we ensure it exists for others
-        if ($env.ShortName -ne "Dev-main") {
-            $varGroup = Ensure-AzDoVariableGroupExists `
-                -Organization $orgName `
-                -Project $selectedProject.Name `
-                -ProjectId $selectedProject.Id `
-                -GroupName "Environment-$($env.ShortName)" `
-                -Variables @{
-                'DATAVERSECONNREF_example_uniquename' = 'connectionid'
-                'DATAVERSEENVVAR_example_uniquename'  = 'value'
-                'DataverseServiceAccountUPN' = $serviceAccountUPN
-            }
-        } else {
-            # Fetch and update Dev variable group with service account UPN
-            $varGroup = Get-VSTeamVariableGroup -ProjectName $selectedProject.Name -Name "Environment-Dev-main" -ErrorAction SilentlyContinue
-            if ($varGroup) {
-                Update-AzDoVariableGroup -ProjectName $selectedProject.Name -GroupName "Environment-Dev-main" -Variables @{
-                    'DataverseServiceAccountUPN' = $serviceAccountUPN
+            # Check for existing service account UPN in variable group
+            $existingServiceAccountUPN = $null
+            try {
+                $existingVarGroup = Get-VSTeamVariableGroup -ProjectName $selectedProject.Name -Name "Environment-$($env.ShortName)" -ErrorAction SilentlyContinue
+                if ($existingVarGroup -and $existingVarGroup.variables -and $existingVarGroup.variables.PSObject.Properties.Name -contains 'DataverseServiceAccountUPN') {
+                    $existingServiceAccountUPN = $existingVarGroup.variables.DataverseServiceAccountUPN.value
                 }
             }
-        }
+            catch {
+                # Ignore errors checking for existing value
+            }
 
-        # Authorize pipeline for Variable Group
-        if ($varGroup -and $varGroup.id) {
-             if ($env.ShortName -eq "Dev-main") {
-                if ($exportPipeline) {
-                    Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'variablegroup' -ResourceId $varGroup.id -PipelineId $exportPipeline.id
+            # Get Service Account UPN
+            Write-Host "Configuring Service Account for environment '$($env.ShortName)'..." -ForegroundColor Cyan
+            $script:serviceAccountUPN = Get-DataverseServiceAccountUPN -ExistingServiceAccounts $serviceAccountsCache -EnvironmentName $env.ShortName -ExistingValue $existingServiceAccountUPN
+            if ($serviceAccountsCache -notcontains $script:serviceAccountUPN) {
+                $script:serviceAccountsCache += $script:serviceAccountUPN
+            }
+            
+            $endpoint = $null
+            if (-not $script:creds.IsExistingServiceConnection) {
+                $endpoint = Ensure-AzDoServiceEndpoint `
+                    -ProjectName $selectedProject.Name `
+                    -ServiceEndpointName $env.ShortName `
+                    -EnvironmentUrl $env.Url `
+                    -ApplicationId $script:creds.ApplicationId `
+                    -ClientSecret $script:creds.ClientSecret `
+                    -TenantId $script:creds.TenantId
+            } else {
+                 # If it is existing, we need to fetch it to get the ID
+                 $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $selectedProject.Name -ErrorAction SilentlyContinue)
+                 $endpoint = $endpoints | Where-Object { $_.name -eq $env.ShortName } | Select-Object -First 1
+            }
+
+            # Authorize pipeline for Service Connection
+            if ($endpoint -and $endpoint.id) {
+                if ($env.ShortName -eq "Dev-main") {
+                    if ($exportPipeline) {
+                        Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'endpoint' -ResourceId $endpoint.id -PipelineId $exportPipeline.id
+                    }
+                } else {
+                    if ($deployPipeline) {
+                        Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'endpoint' -ResourceId $endpoint.id -PipelineId $deployPipeline.id
+                    }
+                }
+            }
+        } | Out-Null
+
+        Invoke-WithErrorHandling -OperationName "Configuring Environment Resources for '$($env.ShortName)'" -ScriptBlock {
+            # Ensure Environment resource exists and authorize pipeline
+            if ($env.ShortName -ne "Dev-main") {
+                $azDoEnv = Ensure-AzDoEnvironment -Organization $orgName -Project $selectedProject.Name -EnvironmentName $env.ShortName -Description "Deployment environment for $($env.ShortName)"
+                
+                if ($azDoEnv -and $deployPipeline) {
+                    Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'environment' -ResourceId $azDoEnv.id -PipelineId $deployPipeline.id
+                }
+            }
+
+            Ensure-DataverseApplicationUser `
+                -EnvironmentUrl $env.Url `
+                -ApplicationId $script:creds.ApplicationId `
+                -TenantId $script:creds.TenantId
+
+            # Ensure Service Account has System Administrator role
+            Ensure-DataverseServiceAccountUser `
+                -EnvironmentUrl $env.Url `
+                -ServiceAccountUPN $script:serviceAccountUPN `
+                -TenantId $script:creds.TenantId
+
+            $varGroup = $null
+            # Variable group for Dev is already created earlier, but we ensure it exists for others
+            if ($env.ShortName -ne "Dev-main") {
+                $varGroup = Ensure-AzDoVariableGroupExists `
+                    -Organization $orgName `
+                    -Project $selectedProject.Name `
+                    -ProjectId $selectedProject.Id `
+                    -GroupName "Environment-$($env.ShortName)" `
+                    -Variables @{
+                    'DATAVERSECONNREF_example_uniquename' = 'connectionid'
+                    'DATAVERSEENVVAR_example_uniquename'  = 'value'
+                    'DataverseServiceAccountUPN' = $script:serviceAccountUPN
                 }
             } else {
-                if ($deployPipeline) {
-                    Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'variablegroup' -ResourceId $varGroup.id -PipelineId $deployPipeline.id
+                # Fetch and update Dev variable group with service account UPN
+                $varGroup = Get-VSTeamVariableGroup -ProjectName $selectedProject.Name -Name "Environment-Dev-main" -ErrorAction SilentlyContinue
+                if ($varGroup) {
+                    Update-AzDoVariableGroup -ProjectName $selectedProject.Name -GroupName "Environment-Dev-main" -Variables @{
+                        'DataverseServiceAccountUPN' = $script:serviceAccountUPN
+                    }
                 }
             }
-        }
+
+            # Authorize pipeline for Variable Group
+            if ($varGroup -and $varGroup.id) {
+                 if ($env.ShortName -eq "Dev-main") {
+                    if ($exportPipeline) {
+                        Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'variablegroup' -ResourceId $varGroup.id -PipelineId $exportPipeline.id
+                    }
+                } else {
+                    if ($deployPipeline) {
+                        Ensure-AzDoPipelinePermission -Organization $orgName -Project $selectedProject.Name -ResourceType 'variablegroup' -ResourceId $varGroup.id -PipelineId $deployPipeline.id
+                    }
+                }
+            }
+        } | Out-Null
     }
 }
 
