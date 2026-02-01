@@ -270,6 +270,21 @@ if ($rnwoodDataverseVersion -like '__*') {
     }
 }
 
+# Upstream repository URL is injected during release process
+# For development/testing, use local workspace path or fallback to GitHub
+$upstreamRepo = '__UPSTREAM_REPO__'
+# Check if placeholder was replaced by comparing if it starts with double underscore
+if ($upstreamRepo -like '__*') {
+    # Placeholders not replaced - must be running from repository for development
+    if ($PSScriptRoot) {
+        Write-Host "Development mode: Using local workspace path as upstream repo" -ForegroundColor Yellow
+        $upstreamRepo = $PSScriptRoot
+    } else {
+        Write-Host "Development mode: Using default GitHub URL as upstream repo" -ForegroundColor Yellow
+        $upstreamRepo = 'https://github.com/rnwood/ALM4Dataverse.git'
+    }
+}
+
 $requiredModules = @{
     'VSTeam'                           = '7.15.2'
     'PSMenu'                           = '0.2.0'
@@ -825,7 +840,7 @@ $justInitialized = $false
 if (-not $hasCommits) {
     Write-Host "Repository '$sharedRepoName' has no commits. Seeding it from the upstream repo..." -ForegroundColor Yellow
 
-    $sharedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
+    $sharedSourceUrl = $upstreamRepo
     $destUrl = $repo.remoteUrl
     if (-not $destUrl) {
         throw "Could not determine remoteUrl for repository '$sharedRepoName'."
@@ -881,7 +896,7 @@ if (-not $hasCommits) {
 
 # Check if we can fast-forward from the shared repo (skip if just initialized)
 if (-not $justInitialized) {
-$sharedSourceUrl = 'https://github.com/rnwood/ALM4Dataverse.git'
+$sharedSourceUrl = $upstreamRepo
 $destUrl = $repo.remoteUrl
 if (-not $destUrl) {
     throw "Could not determine remoteUrl for repository '$sharedRepoName'."

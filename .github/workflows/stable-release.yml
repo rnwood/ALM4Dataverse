@@ -22,44 +22,14 @@ jobs:
         id: get_tag
         run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-      - name: Get Rnwood.Dataverse.Data.PowerShell version
-        id: get_dataverse_version
-        run: |
-          # Use PowerShell to reliably read the version from the config file
-          DATAVERSE_VERSION=$(pwsh -Command "
-            \$config = Import-PowerShellDataFile -Path 'alm-config-defaults.psd1'
-            \$config.scriptDependencies.'Rnwood.Dataverse.Data.PowerShell'
-          ")
-          echo "DATAVERSE_VERSION=$DATAVERSE_VERSION" >> $GITHUB_OUTPUT
-          echo "Found Rnwood.Dataverse.Data.PowerShell version: $DATAVERSE_VERSION"
-
       - name: Prepare setup.ps1 for release
         id: prepare_setup
         run: |
           TAG_NAME="${{ steps.get_tag.outputs.TAG_NAME }}"
-          DATAVERSE_VERSION="${{ steps.get_dataverse_version.outputs.DATAVERSE_VERSION }}"
+          UPSTREAM_REPO="https://github.com/${{ github.repository }}.git"
           
-          # Define placeholders
-          ALM4DATAVERSE_REF_PLACEHOLDER="__ALM4DATAVERSE_REF__"
-          RNWOOD_DATAVERSE_VERSION_PLACEHOLDER="__RNWOOD_DATAVERSE_VERSION__"
-          
-          # Create release directory
-          mkdir -p release
-          
-          # Process setup.ps1 and replace placeholders
-          sed -e "s/${ALM4DATAVERSE_REF_PLACEHOLDER}/${TAG_NAME}/g" \
-              -e "s/${RNWOOD_DATAVERSE_VERSION_PLACEHOLDER}/${DATAVERSE_VERSION}/g" \
-              setup.ps1 > release/setup.ps1
-          
-          echo "Processed setup.ps1 with:"
-          echo "  ALM4DATAVERSE_REF: $TAG_NAME"
-          echo "  RNWOOD_DATAVERSE_VERSION: $DATAVERSE_VERSION"
-          
-          # Verify placeholders were replaced
-          if grep -q "${ALM4DATAVERSE_REF_PLACEHOLDER}\|${RNWOOD_DATAVERSE_VERSION_PLACEHOLDER}" release/setup.ps1; then
-            echo "ERROR: Placeholders were not fully replaced!"
-            exit 1
-          fi
+          # Use the prepare-release.sh script
+          ./prepare-release.sh "$TAG_NAME" release "$UPSTREAM_REPO"
           
           echo "SETUP_FILE=release/setup.ps1" >> $GITHUB_OUTPUT
 
