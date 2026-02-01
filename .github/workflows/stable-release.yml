@@ -28,8 +28,8 @@ jobs:
           TAG_NAME="${{ steps.get_tag.outputs.TAG_NAME }}"
           UPSTREAM_REPO="https://github.com/${{ github.repository }}.git"
           
-          # Use the prepare-release.sh script
-          ./prepare-release.sh "$TAG_NAME" release "$UPSTREAM_REPO"
+          # Use the prepare-release.ps1 script
+          pwsh -File prepare-release.ps1 -TagName "$TAG_NAME" -OutputDir release -UpstreamRepo "$UPSTREAM_REPO"
           
           echo "SETUP_FILE=release/setup.ps1" >> $GITHUB_OUTPUT
 
