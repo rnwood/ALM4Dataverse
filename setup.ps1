@@ -858,7 +858,7 @@ if (-not $hasCommits) {
         if ($LASTEXITCODE -ne 0) { throw "Git init failed with exit code $LASTEXITCODE" }
 
         & git remote add origin $sharedSourceUrl | Out-Null
-        & git fetch origin --tags | Out-Null
+        & git fetch origin | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Git fetch failed with exit code $LASTEXITCODE" }
 
         # Determine the target ref
@@ -919,7 +919,7 @@ try {
     
     # Add upstream remote
     & git remote add upstream $sharedSourceUrl | Out-Null
-    & git fetch upstream --tags | Out-Null
+    & git fetch upstream | Out-Null
     
     # Check relationship between HEAD and upstream ref
     $targetRef = "upstream/$ALM4DataverseRef"
