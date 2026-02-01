@@ -64,9 +64,14 @@ This repository contains the shared pipeline templates and scripts.
 
 1. Go to **Repos** > **Files**
 2. Create a new repository named `ALM4Dataverse` (initialize as empty - do not import)
-3. Clone the newly created empty repository to your local machine
-4. Add the upstream repository and fetch the stable release:
+3. Copy the clone URL from Azure DevOps (click "Clone" button in the top right)
+4. Clone the repository and set it up with the stable release:
    ```bash
+   # Clone your newly created empty repository
+   # Replace YOUR_CLONE_URL with the URL you copied from Azure DevOps
+   git clone YOUR_CLONE_URL
+   cd ALM4Dataverse
+   
    # Add the upstream repository as a remote
    git remote add upstream https://github.com/rnwood/ALM4Dataverse.git
    
