@@ -2388,8 +2388,35 @@ Write-Section "Ensuring environment variable group"
 
 $mainRepo = Select-AzDoMainRepository -ProjectName $selectedProject.Name -SharedRepositoryName $sharedRepoName
 
-$copyRoot = Join-Path $PSScriptRoot 'copy-to-your-repo'
-Sync-CopyToYourRepoIntoGitRepo -SourceRoot $copyRoot -TargetRepo $mainRepo -PreferredBranch 'main'
+# Determine copy-to-your-repo folder location
+# When running from a file, use PSScriptRoot. When downloaded and run via iex, clone the shared repo.
+if ($PSScriptRoot) {
+    # Running from a file - use local path
+    $copyRoot = Join-Path $PSScriptRoot 'copy-to-your-repo'
+    Sync-CopyToYourRepoIntoGitRepo -SourceRoot $copyRoot -TargetRepo $mainRepo -PreferredBranch 'main'
+}
+else {
+    # Running via iex (no PSScriptRoot) - clone the shared repo to get copy-to-your-repo
+    $sharedRepoClone = Join-Path $env:TEMP ("ALM4Dataverse-SharedRepo-" + [guid]::NewGuid().ToString('n'))
+    New-Item -ItemType Directory -Path $sharedRepoClone -Force | Out-Null
+    
+    try {
+        Write-Host "Cloning shared repository to get template files..." -ForegroundColor Yellow
+        & git -c "http.extraheader=AUTHORIZATION: bearer $azDevOpsAccessToken" clone $repo.remoteUrl $sharedRepoClone
+        if ($LASTEXITCODE -ne 0) {
+            throw "Git clone of shared repository failed with exit code $LASTEXITCODE"
+        }
+        
+        $copyRoot = Join-Path $sharedRepoClone 'copy-to-your-repo'
+        Sync-CopyToYourRepoIntoGitRepo -SourceRoot $copyRoot -TargetRepo $mainRepo -PreferredBranch 'main'
+    }
+    finally {
+        # Clean up the temporary clone
+        if (Test-Path $sharedRepoClone) {
+            Remove-Item -LiteralPath $sharedRepoClone -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
 
 Write-Section "Ensuring Build Service has Contribute on main repo"
 Ensure-AzDoBuildServiceHasContributeOnRepo -Organization $orgName -ProjectName $selectedProject.Name -ProjectId $selectedProject.Id -RepositoryId $mainRepo.Id
