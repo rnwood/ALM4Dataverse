@@ -1716,12 +1716,12 @@ function Ensure-AzDoDeploymentApproversTeam {
     $teamName = "$EnvironmentName deployment approvers"
     Write-Host "Ensuring team '$teamName' exists..." -ForegroundColor DarkGray
 
-    $team = Get-VSTeam -ProjectName $ProjectName -Name $teamName -ErrorAction SilentlyContinue | Select-Object -First 1
+    $team = Get-VSTeam -ProjectName $ProjectName -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $teamName } | Select-Object -First 1
     
     if (-not $team) {
         Write-Host "Creating team '$teamName'..." -ForegroundColor Yellow
         Add-VSTeam -ProjectName $ProjectName -Name $teamName -Description "Approvers for $EnvironmentName deployment" | Out-Null
-        $team = Get-VSTeam -ProjectName $ProjectName -Name $teamName | Select-Object -First 1
+        $team = Get-VSTeam -ProjectName $ProjectName | Where-Object { $_.Name -eq $teamName } | Select-Object -First 1
     }
        
     # Add current user to the team
