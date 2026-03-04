@@ -21,7 +21,7 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$ArtifactStagingDirectory,
 
-    [string]$TempDirectory = "$env:TEMP\$([IO.Path]::GetTempFileName())",
+    [string]$TempDirectory = "([IO.Path]::GetTempPath())\$([IO.Path]::GetTempFileName())",
     
     [Parameter(Mandatory=$false)]
     [string]$EnvironmentName = "Unknown"
@@ -35,7 +35,6 @@ Write-Host "##[section]Exporting Solutions from $EnvironmentName"
 
 # Read solutions configuration
 $solutionsConfig = Get-AlmConfig -BaseDirectory $SourceDirectory
-Write-Host "##[debug]Loaded configuration"
 
 Invoke-Hooks -HookType "preExport" -BaseDirectory $SourceDirectory -Config $solutionsConfig -AdditionalContext @{
     SourceDirectory = $SourceDirectory

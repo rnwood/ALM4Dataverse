@@ -28,7 +28,7 @@ function Get-AlmConfig {
 
     $mainConfig = Import-PowerShellDataFile -Path $configPath
 
-    function mergeHashTables($defaultConfig, $mainConfig) {
+    function mergeConfigValue($defaultConfig, $mainConfig) {
         if (-not $defaultConfig) {
             return $mainConfig
         }
@@ -37,9 +37,19 @@ function Get-AlmConfig {
             return $defaultConfig
         }
 
+        # If both are arrays, concatenate them
+        if ($defaultConfig -is [array] -and $mainConfig -is [array]) {
+            return @(@($defaultConfig) + @($mainConfig))
+        }
+
+        # If neither is a hashtable, main value wins (primitive override)
+        if ($defaultConfig -isnot [hashtable] -or $mainConfig -isnot [hashtable]) {
+            return $mainConfig
+        }
+
         $newValue = @{}
         foreach ($subKey in $defaultConfig.Keys + $mainConfig.Keys | Select-Object -Unique) {
-            $newValue[$subKey] = mergeHashTables $defaultConfig[$subKey] $mainConfig[$subKey]
+            $newValue[$subKey] = mergeConfigValue $defaultConfig[$subKey] $mainConfig[$subKey]
         }
         return $newValue
     }
@@ -56,7 +66,7 @@ function Get-AlmConfig {
             }
             # If both are hashtables, merge them
             elseif ($defaultValue -is [hashtable] -and $mainValue -is [hashtable]) {
-                $config[$key] = mergeHashTables $defaultValue $mainValue
+                $config[$key] = mergeConfigValue $defaultValue $mainValue
             }
             # Otherwise, main value wins
             else {
@@ -75,7 +85,10 @@ function Get-AlmConfig {
         }
     }
 
-    $config["defaults"] = $defaultConfig
+    $config["_main"] = $mainConfig
+    $config["_defaults"] = $defaultConfig
+
+    Write-Host "##[debug]Loaded configuration: $($config | ConvertTo-Json -Depth 20)"
     
     return $config
 }
@@ -113,6 +126,8 @@ function Invoke-Hooks {
             $hookPath = $hook -replace '\[alm\]', $almRootPath
             
             if (Test-Path $hookPath) {
+
+                write-host "##[debug] Executing hook script at path: $hookPath with context: $($context | ConvertTo-Json -Depth 10)"
 
                 & $hookPath -Context $context
                 if (-not $? ) {
