@@ -42,8 +42,8 @@ foreach ($module in $config.scriptDependencies.Keys) {
     }
     Write-Host "Installed $module version $($installedModule.Version)"
     
-    if ($config.defaults.scriptDependencies.ContainsKey($module)) {
-        $defaultVersion = $config.defaults.scriptDependencies[$module]
+    if ($config._defaults.scriptDependencies.ContainsKey($module)) {
+        $defaultVersion = $config._defaults.scriptDependencies[$module]
         if (([version] $version) -lt ([version]$defaultVersion)) {
             throw "Installed version $($installedModule.Version) of $module is less than the default minimum required version $defaultVersion. Please update the version in alm-config.psd1."
         }
