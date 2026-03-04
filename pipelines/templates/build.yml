@@ -41,14 +41,27 @@ stages:
 
         - pwsh: |
             $ErrorActionPreference = 'Stop'
-            Write-Host "Tagging source repository with build version v$(Build.BuildNumber)"
+            $rawBuildNumber = '$(Build.BuildNumber)'
+            $sanitizedBuildNumber = $rawBuildNumber `
+              -replace '[^a-zA-Z0-9._/-]', '-' `
+              -replace '\.{2,}', '-' `
+              -replace '/{2,}', '/'
+            $sanitizedBuildNumber = $sanitizedBuildNumber.Trim('/', '.')
+            if ($sanitizedBuildNumber.EndsWith('.lock')) {
+              $sanitizedBuildNumber = $sanitizedBuildNumber -replace '\.lock$', '-lock'
+            }
+            if ([string]::IsNullOrWhiteSpace($sanitizedBuildNumber)) {
+              throw "Build number '$rawBuildNumber' cannot be converted to a valid git tag value"
+            }
+            $tagName = "v$sanitizedBuildNumber"
+            Write-Host "Tagging source repository with build version $tagName"
             git config user.email "$(Build.RequestedForEmail)"
             if ($LASTEXITCODE -ne 0) { throw "git config user.email failed with exit code $LASTEXITCODE" }
             git config user.name "$(Build.RequestedFor)"
             if ($LASTEXITCODE -ne 0) { throw "git config user.name failed with exit code $LASTEXITCODE" }
-            git tag -a "v$(Build.BuildNumber)" -m "Build version $(Build.BuildNumber)"
+            git tag -a "$tagName" -m "Build version $sanitizedBuildNumber"
             if ($LASTEXITCODE -ne 0) { throw "git tag failed with exit code $LASTEXITCODE" }
-            git push origin "v$(Build.BuildNumber)"
+            git push origin "$tagName"
             if ($LASTEXITCODE -ne 0) { throw "git push failed with exit code $LASTEXITCODE" }
           displayName: 'Tag Source with Build Version'
           workingDirectory: '$(Pipeline.Workspace)/self'
