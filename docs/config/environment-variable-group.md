@@ -29,15 +29,15 @@ For example:
 
 Connection references in Dataverse solutions must be configured to point to the correct connection in each environment.
 
-**Naming Pattern**: `DATAVERSECONNREF_{connectionreference_uniquename}`
+**Naming Pattern**: `CONNREF_{connectionreference_uniquename}`
 
 For each connection reference in your solution:
-- **Variable name**: `DATAVERSECONNREF_` followed by the connection reference unique name (schema name)
+- **Variable name**: `CONNREF_` followed by the connection reference unique name (schema name)
 - **Variable value**: The connection ID from the target environment
 
 **Example**:
 ```
-Variable Name: DATAVERSECONNREF_contoso_sharedsharepointonline_12abc
+Variable Name: CONNREF_contoso_sharedsharepointonline_12abc
 Variable Value: 00000000-0000-0000-0000-000000000000
 ```
 
@@ -61,15 +61,15 @@ Variable Value: 00000000-0000-0000-0000-000000000000
 
 Environment variables in Dataverse can have different values in each environment.
 
-**Naming Pattern**: `DATAVERSEENVVAR_{environmentvariable_schemaname}`
+**Naming Pattern**: `ENVVAR_{environmentvariable_schemaname}`
 
 For each environment variable in your solution:
-- **Variable name**: `DATAVERSEENVVAR_` followed by the environment variable schema name
+- **Variable name**: `ENVVAR_` followed by the environment variable schema name
 - **Variable value**: The value for this environment
 
 **Example**:
 ```
-Variable Name: DATAVERSEENVVAR_contoso_APIEndpoint
+Variable Name: ENVVAR_contoso_APIEndpoint
 Variable Value: https://api.production.contoso.com
 ```
 
