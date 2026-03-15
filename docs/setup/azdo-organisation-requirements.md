@@ -23,3 +23,28 @@ If you qualify, you can use the free tier with limited pipeline parallel jobs.
 Alternatively, you can configure your organisation with at least one paid "parallel job" for unlimited pipeline usage.
 
 [See the Microsoft documentation for information on configuring parallel jobs](https://learn.microsoft.com/en-us/azure/devops/pipelines/licensing/concurrent-jobs?view=azure-devops&tabs=ms-hosted)
+
+## Extensions
+
+## Power Platform Build Tools
+
+The Power Platform Build Tools extension is required for the pipelines to work. It provides the PAC CLI.
+
+1. Navigate to the Azure DevOps Marketplace: [Power Platform Build Tools](https://marketplace.visualstudio.com/items?itemName=microsoft-IsvExpTools.PowerPlatform-BuildTools)
+2. Click "Get it free"
+3. Select your Azure DevOps organization
+4. Click "Install"
+
+📖 **Reference**: [Install extensions](https://learn.microsoft.com/en-us/azure/devops/marketplace/install-extension)
+
+## ALM4Dataverse AzDO Extensions
+
+The ALM4Dataverse AzDO Extensions extension is required for the pipelines to work. It provides the authentication task that allows ALM4Dataverse to work flexibly with different modern authentication schemes.
+
+1. Navigate to the Azure DevOps Marketplace: [ALM4Dataverse Azure DevOps Extensions](https://marketplace.visualstudio.com/items?itemName=ALM4Dataverse.alm4dataverse-azdo-extensions)
+2. Click "Get it free"
+3. Select your Azure DevOps organization
+4. Click "Install"
+
+📖 **Reference**: [Install extensions](https://learn.microsoft.com/en-us/azure/devops/marketplace/install-extension)
+

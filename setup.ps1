@@ -107,6 +107,32 @@ function ConvertFrom-GitRefToBranchName {
     return $Ref
 }
 
+function ConvertTo-UrlSafeName {
+    <#
+    .SYNOPSIS
+        Converts a name to a URL-safe format for use in federated identity credential names.
+    
+    .DESCRIPTION
+        Replaces characters that are not safe in URL segments with hyphens.
+        Allowed characters are: A-Z, a-z, 0-9, and hyphens.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    # Replace any character that is not alphanumeric or hyphen with a hyphen
+    $safeName = $Name -replace '[^a-zA-Z0-9-]', '-'
+    
+    # Remove consecutive hyphens
+    $safeName = $safeName -replace '-+', '-'
+    
+    # Trim hyphens from start and end
+    $safeName = $safeName.Trim('-')
+    
+    return $safeName
+}
+
 #endregion
 
 #region Initialization
@@ -771,6 +797,7 @@ if ($null -eq $orgIndex) {
 }
 
 $orgName = $orgNames[$orgIndex]
+$orgId = $orgsSorted[$orgIndex].accountId
 $orgUri = $orgsSorted[$orgIndex].accountUri
 Write-Host "Selected organization: $orgName"
 if ($orgUri) {
@@ -783,39 +810,49 @@ Write-Host "VSTeam configured for organization '$orgName' using a bearer token."
 
 Write-Section "Ensuring Needed Extensions are Enabled"
 
-$requiredExtension = "microsoft-IsvExpTools.PowerPlatform-BuildTools"
-Invoke-WithErrorHandling -OperationName "Installing Power Platform Build Tools Extension" -ScriptBlock {
-    # Check if the extension is already installed
-    $installedExtensions = Get-VSTeamExtension
-    $ppBuildTools = $installedExtensions | Where-Object { $_.publisherId -eq "microsoft-IsvExpTools" -and $_.extensionId -eq "PowerPlatform-BuildTools" }
-    
-    if ($ppBuildTools) {
-        Write-Host "Power Platform Build Tools extension is already installed (Version: $($ppBuildTools.version))."
-    }
-    else {
-        if (-not (Read-YesNo -Prompt "Power Platform Build Tools extension not found. Install it?")) {
-            throw "Power Platform Build Tools extension is required. Setup cannot continue without it."
-        }
-        Write-Host "Power Platform Build Tools extension not found. Installing..." -ForegroundColor Yellow
-        Write-Host "This may require organization administrative permissions." -ForegroundColor Yellow
-        
-        # Install the extension
-        Install-VSTeamExtension -PublisherId "microsoft-IsvExpTools" -ExtensionId "PowerPlatform-BuildTools"
-        
-        # Verify installation
+$requiredExtensions = @(
+    "microsoft-IsvExpTools.PowerPlatform-BuildTools",
+    "ALM4Dataverse.alm4dataverse-azdo-extensions"
+)
+
+foreach ($requiredExtension in $requiredExtensions) {
+    $parts = $requiredExtension -split '\.'
+    $publisherId = $parts[0]
+    $extensionId = $parts[1..($parts.Length - 1)] -join '.'
+
+    Invoke-WithErrorHandling -OperationName "Installing extension '$requiredExtension'" -ScriptBlock {
+        # Check if the extension is already installed
         $installedExtensions = Get-VSTeamExtension
-        $ppBuildTools = $installedExtensions | Where-Object { $_.publisherId -eq "microsoft-IsvExpTools" -and $_.extensionId -eq "PowerPlatform-BuildTools" }
+        $installed = $installedExtensions | Where-Object { $_.publisherId -eq $publisherId -and $_.extensionId -eq $extensionId }
         
-        if ($ppBuildTools) {
-            Write-Host "Power Platform Build Tools extension installed successfully (Version: $($ppBuildTools.version))."
+        if ($installed) {
+            Write-Host "Extension '$requiredExtension' is already installed (Version: $($installed.version))."
         }
         else {
-            Write-Host "Please install the extension manually from:" -ForegroundColor Yellow
-            Write-Host "https://marketplace.visualstudio.com/acquisition?itemName=microsoft-IsvExpTools.PowerPlatform-BuildTools" -ForegroundColor Yellow
-            throw "Failed to verify Power Platform Build Tools extension installation after install command completed."
+            if (-not (Read-YesNo -Prompt "Extension '$requiredExtension' not found. Install it?")) {
+                throw "Extension '$requiredExtension' is required. Setup cannot continue without it."
+            }
+            Write-Host "Extension '$requiredExtension' not found. Installing..." -ForegroundColor Yellow
+            Write-Host "This may require organization administrative permissions." -ForegroundColor Yellow
+            
+            # Install the extension
+            Install-VSTeamExtension -PublisherId $publisherId -ExtensionId $extensionId
+            
+            # Verify installation
+            $installedExtensions = Get-VSTeamExtension
+            $installed = $installedExtensions | Where-Object { $_.publisherId -eq $publisherId -and $_.extensionId -eq $extensionId }
+            
+            if ($installed) {
+                Write-Host "Extension '$requiredExtension' installed successfully (Version: $($installed.version))."
+            }
+            else {
+                Write-Host "Please install the extension manually from:" -ForegroundColor Yellow
+                Write-Host "https://marketplace.visualstudio.com/acquisition?itemName=$requiredExtension" -ForegroundColor Yellow
+                throw "Failed to verify extension '$requiredExtension' installation after install command completed."
+            }
         }
-    }
-} | Out-Null
+    } | Out-Null
+}
 
 Write-Section "Select target Azure DevOps Project"
 
@@ -933,16 +970,35 @@ if (-not $hasCommits) {
             & git fetch origin | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Git fetch failed with exit code $LASTEXITCODE" }
 
-            # Determine the target ref
-            $targetRef = "origin/$ALM4DataverseRef"
-            & git rev-parse --verify --quiet $targetRef | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                $targetRef = $ALM4DataverseRef
-                & git rev-parse --verify --quiet $targetRef | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Could not resolve reference '$ALM4DataverseRef' from upstream repository."
-                }
+        # Determine the target ref using ls-remote to support both tags and branches
+        & git ls-remote --exit-code origin $ALM4DataverseRef | Out-Null
+        if ($LASTEXITCODE -eq 2) {
+            throw "Could not resolve reference '$ALM4DataverseRef' from upstream repository."
+        }
+        if ($LASTEXITCODE -ne 0) {
+            throw "Git ls-remote failed with exit code $LASTEXITCODE"
+        }
+        
+        # Get the full ref name from ls-remote output
+        $lsRemoteOutput = (& git ls-remote origin $ALM4DataverseRef | Select-Object -First 1)
+        if ($lsRemoteOutput -match '^([a-f0-9]+)\s+(.+)$') {
+            $commitSha = $Matches[1]
+            $fullRef = $Matches[2]
+            # For branches, use origin/branch-name; for tags, use the commit SHA directly
+            if ($fullRef -match '^refs/heads/(.+)$') {
+                $targetRef = "origin/$($Matches[1])"
             }
+            elseif ($fullRef -match '^refs/tags/') {
+                # Use the commit SHA directly since tags aren't automatically created locally
+                $targetRef = $commitSha
+            }
+            else {
+                $targetRef = $ALM4DataverseRef
+            }
+        }
+        else {
+            $targetRef = $ALM4DataverseRef
+        }
 
             # Checkout the target ref as main branch
             & git checkout -b main $targetRef | Out-Null
@@ -990,15 +1046,34 @@ try {
     & git remote add upstream $sharedSourceUrl | Out-Null
     & git fetch upstream | Out-Null
     
-    # Check relationship between HEAD and upstream ref
-    $targetRef = "upstream/$ALM4DataverseRef"
-    & git rev-parse --verify --quiet $targetRef | Out-Null
+    # Check relationship between HEAD and upstream ref using ls-remote to support both tags and branches
+    & git ls-remote --exit-code upstream $ALM4DataverseRef | Out-Null
+    if ($LASTEXITCODE -eq 2) {
+        throw "Could not resolve reference '$ALM4DataverseRef' from upstream repository."
+    }
     if ($LASTEXITCODE -ne 0) {
-        $targetRef = $ALM4DataverseRef
-        & git rev-parse --verify --quiet $targetRef | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not resolve reference '$ALM4DataverseRef' from upstream repository."
+        throw "Git ls-remote failed with exit code $LASTEXITCODE"
+    }
+    
+    # Get the full ref name from ls-remote output
+    $lsRemoteOutput = (& git ls-remote upstream $ALM4DataverseRef | Select-Object -First 1)
+    if ($lsRemoteOutput -match '^([a-f0-9]+)\s+(.+)$') {
+        $commitSha = $Matches[1]
+        $fullRef = $Matches[2]
+        # For branches, use upstream/branch-name; for tags, use the commit SHA directly
+        if ($fullRef -match '^refs/heads/(.+)$') {
+            $targetRef = "upstream/$($Matches[1])"
         }
+        elseif ($fullRef -match '^refs/tags/') {
+            # Use the commit SHA directly since tags aren't automatically created locally
+            $targetRef = $commitSha
+        }
+        else {
+            $targetRef = $ALM4DataverseRef
+        }
+    }
+    else {
+        $targetRef = $ALM4DataverseRef
     }
     $upstreamRef = $targetRef
     
@@ -1981,8 +2056,9 @@ function Ensure-AzDoServiceEndpoint {
         [Parameter(Mandatory)][string]$ServiceEndpointName,
         [Parameter(Mandatory)][string]$EnvironmentUrl,
         [Parameter(Mandatory)][string]$ApplicationId,
-        [Parameter(Mandatory)][string]$ClientSecret,
-        [Parameter(Mandatory)][string]$TenantId
+        [Parameter()][string]$ClientSecret,
+        [Parameter(Mandatory)][string]$TenantId,
+        [Parameter()][string]$AuthType = 'Secret'
     )
 
     Write-Host "Ensuring Service Endpoint '$ServiceEndpointName'..." -ForegroundColor DarkGray
@@ -2001,7 +2077,26 @@ function Ensure-AzDoServiceEndpoint {
     try {
         $payload = @{
             url = $EnvironmentUrl
-            authorization = @{
+            data = @{}
+        }
+
+        if ($AuthType -eq 'WIF') {
+            # Workload Identity Federation
+            $payload.authorization = @{
+                parameters = @{
+                    "serviceprincipalid" = $ApplicationId
+                    "tenantid" = $TenantId
+                }
+                scheme = "WorkloadIdentityFederation"
+            }
+        }
+        else {
+            # Traditional Service Principal with Secret
+            if ([string]::IsNullOrWhiteSpace($ClientSecret)) {
+                throw "ClientSecret is required when AuthType is 'Secret'."
+            }
+            
+            $payload.authorization = @{
                 parameters = @{
                     "tenantId" = $TenantId
                     "applicationId" = $ApplicationId
@@ -2009,7 +2104,6 @@ function Ensure-AzDoServiceEndpoint {
                 }
                 scheme = "None"
             }
-            data = @{}
         }
 
         $response = Add-VSTeamServiceEndpoint -ProjectName $ProjectName `
@@ -2019,6 +2113,9 @@ function Ensure-AzDoServiceEndpoint {
 
         Write-Host "Service Endpoint '$ServiceEndpointName' created successfully."
         Start-Sleep -Seconds 5 # Wait a bit for SE to be fully available
+        # Re-fetch to ensure we have all properties including WIF issuer/subject assigned by Azure DevOps
+        $fetched = @(Get-VSTeamServiceEndpoint -ProjectName $ProjectName -ErrorAction SilentlyContinue) | Where-Object { $_.name -eq $ServiceEndpointName } | Select-Object -First 1
+        if ($fetched) { return $fetched }
         return $response
     }
     catch {
@@ -2070,10 +2167,77 @@ function Ensure-EntraIdServicePrincipal {
     }
 }
 
+function Add-EntraIdFederatedCredential {
+    <#
+    .SYNOPSIS
+        Adds a federated identity credential to an Entra ID application for Workload Identity Federation.
+    
+    .DESCRIPTION
+        Creates a federated identity credential that allows Azure DevOps to authenticate to Azure
+        using Workload Identity Federation (WIF) without requiring client secrets.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$ApplicationObjectId,
+        [Parameter(Mandatory)][string]$TenantId,
+        [Parameter(Mandatory)][string]$Issuer,
+        [Parameter(Mandatory)][string]$Subject,
+        [Parameter(Mandatory)][string]$CredentialName
+    )
+
+    $graphToken = Get-AuthToken -ResourceUrl "https://graph.microsoft.com" -TenantId $TenantId
+    $headers = @{
+        Authorization = "Bearer $($graphToken.AccessToken)"
+        "Content-Type" = "application/json"
+    }
+
+    $issuer = $Issuer
+    $subject = $Subject
+    $credentialName = $CredentialName
+
+    Write-Host "Adding federated identity credential '$credentialName'..." -ForegroundColor Yellow
+
+    # Check if credential already exists
+    $listUri = "https://graph.microsoft.com/beta/applications/$ApplicationObjectId/federatedIdentityCredentials"
+    try {
+        $existing = Invoke-RestMethod -Uri $listUri -Headers $headers -Method Get
+        $existingCred = $existing.value | Where-Object { 
+            $_.issuer -eq $issuer -and $_.subject -eq $subject 
+        } | Select-Object -First 1
+        
+        if ($existingCred) {
+            Write-Host "Federated identity credential already exists for this issuer and subject."
+            return $existingCred
+        }
+    }
+    catch {
+        Write-Warning "Failed to check for existing federated credentials: $($_.Exception.Message)"
+    }
+
+    # Create the federated credential
+    $body = @{
+        name = $credentialName
+        issuer = $issuer
+        subject = $subject
+        audiences = @("api://AzureADTokenExchange")
+        description = "Workload Identity Federation for Azure DevOps service connection"
+    }
+
+    try {
+        $credential = Invoke-RestMethod -Uri $listUri -Headers $headers -Method Post -Body ($body | ConvertTo-Json)
+        Write-Host "Created federated identity credential successfully."
+        return $credential
+    }
+    catch {
+        Write-Error "Failed to create federated identity credential: $($_.Exception.Message)"
+        throw
+    }
+}
+
 function New-EntraIdApplication {
     param(
         [Parameter(Mandatory)][string]$DisplayName,
-        [Parameter(Mandatory)][string]$TenantId
+        [Parameter(Mandatory)][string]$TenantId,
+        [Parameter()][string]$AuthType = 'Secret'
     )
     
     # Get token for Graph
@@ -2104,25 +2268,32 @@ function New-EntraIdApplication {
         Write-Host "Created App Registration '$DisplayName' ($($app.appId))."
     }
 
-    # Create secret
-    Write-Host "Creating client secret..." -ForegroundColor Yellow
-    $secretBody = @{
-        passwordCredential = @{
-            displayName = "ALM4Dataverse Setup"
-        }
-    }
-    $secretUri = "https://graph.microsoft.com/v1.0/applications/$($app.id)/addPassword"
-    $secretResponse = Invoke-RestMethod -Uri $secretUri -Headers $headers -Method Post -Body ($secretBody | ConvertTo-Json)
-    
     [void](Ensure-EntraIdServicePrincipal -ApplicationId $app.appId -TenantId $TenantId)
 
-    return [pscustomobject]@{
+    $result = [pscustomobject]@{
         Name = $DisplayName
         ApplicationId = $app.appId
-        ClientSecret = $secretResponse.secretText
+        ApplicationObjectId = $app.id
+        ClientSecret = $null
         TenantId = $TenantId
+        AuthType = $AuthType
         IsExistingServiceConnection = $false
     }
+
+    if ($AuthType -ne 'WIF') {
+        # Create secret for traditional authentication
+        Write-Host "Creating client secret..." -ForegroundColor Yellow
+        $secretBody = @{
+            passwordCredential = @{
+                displayName = "ALM4Dataverse Setup"
+            }
+        }
+        $secretUri = "https://graph.microsoft.com/v1.0/applications/$($app.id)/addPassword"
+        $secretResponse = Invoke-RestMethod -Uri $secretUri -Headers $headers -Method Post -Body ($secretBody | ConvertTo-Json)
+        $result.ClientSecret = $secretResponse.secretText
+    }
+
+    return $result
 }
 
 function Get-PowerPlatformSCCredentials {
@@ -2131,7 +2302,9 @@ function Get-PowerPlatformSCCredentials {
         [Parameter()][array]$ExistingCredentials,
         [Parameter()][string]$TenantId,
         [Parameter()][string]$ProjectName,
-        [Parameter()][string]$EnvironmentName
+        [Parameter()][string]$EnvironmentName,
+        [Parameter()][string]$OrganizationId,
+        [Parameter()][string]$OrganizationName
     )
 
     # 1. Try to find existing Service Connection to see if we can reuse its App ID
@@ -2219,20 +2392,45 @@ function Get-PowerPlatformSCCredentials {
         return $action.Creds
     }
     elseif ($action.Type -eq 'CreateNew') {
+        # Prompt for authentication type
+        Write-Host ""
+        $authTypeItems = @(
+            "Workload Identity Federation (recommended, no secrets)",
+            "Service Principal with Secret (traditional)"
+        )
+        $authTypeSelection = Select-FromMenu -Title "Select authentication type for the new service connection" -Items $authTypeItems
+        if ($null -eq $authTypeSelection) { throw "No authentication type selected." }
+        
+        $authType = if ($authTypeSelection -eq 1) { 'Secret' } else { 'WIF' }
+        
         $appName = "$ProjectName - $EnvironmentName - deployment"
-        return New-EntraIdApplication -DisplayName $appName -TenantId $TenantId
+        
+        if ($authType -eq 'WIF') {
+            return New-EntraIdApplication `
+                -DisplayName $appName `
+                -TenantId $TenantId `
+                -AuthType 'WIF'
+        }
+        else {
+            return New-EntraIdApplication `
+                -DisplayName $appName `
+                -TenantId $TenantId `
+                -AuthType 'Secret'
+        }
     }
     elseif ($action.Type -eq 'ExistingSCApp') {
         $app = $action.App
-        Write-Host "Selected App: $($app.displayName) ($($app.appId))" -ForegroundColor Cyan
+        Write-Host "Using existing service connection with App: $($app.displayName) ($($app.appId))" -ForegroundColor Cyan
      
-        [void](Ensure-EntraIdServicePrincipal -ApplicationId $app.appId -TenantId $TenantId)
-
+        # Since the service connection already exists, we just return a marker object
+        # The credentials are already configured in the existing service connection
         return [pscustomobject]@{
             Name = $app.displayName
             ApplicationId = $app.appId
+            ApplicationObjectId = $app.id
             ClientSecret = $null
             TenantId = $TenantId
+            AuthType = 'Unknown' # Existing SC, auth type already configured
             IsExistingServiceConnection = $true
         }
     }
@@ -2250,20 +2448,33 @@ function Get-PowerPlatformSCCredentials {
                 Write-Warning "The Application ID must be a valid GUID. Please try again."
             }
         }
+
+        # Prompt for authentication type
+        Write-Host ""
+        $authTypeItems = @(
+            "Service Principal with Secret (traditional)",
+            "Workload Identity Federation (recommended, no secrets)"
+        )
+        $authTypeSelection = Select-FromMenu -Title "Select authentication type" -Items $authTypeItems
+        if ($null -eq $authTypeSelection) { throw "No authentication type selected." }
+        
+        $authType = if ($authTypeSelection -eq 0) { 'Secret' } else { 'WIF' }
         
         $secret = $null
-        while ($true) {
-            $secretSecure = Read-Host "Client Secret" -AsSecureString
-            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secretSecure)
-            $secret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-            
-            if ($secret -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
-                Write-Warning "The Client Secret looks like a GUID. You should enter the Secret VALUE, not the Secret ID."
-                if (Read-YesNo -Prompt "Are you sure this is the Secret Value?" -DefaultNo) {
+        if ($authType -eq 'Secret') {
+            while ($true) {
+                $secretSecure = Read-Host "Client Secret" -AsSecureString
+                $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secretSecure)
+                $secret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+                
+                if ($secret -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+                    Write-Warning "The Client Secret looks like a GUID. You should enter the Secret VALUE, not the Secret ID."
+                    if (Read-YesNo -Prompt "Are you sure this is the Secret Value?" -DefaultNo) {
+                        break
+                    }
+                } else {
                     break
                 }
-            } else {
-                break
             }
         }
 
@@ -2272,8 +2483,10 @@ function Get-PowerPlatformSCCredentials {
         return [pscustomobject]@{
             Name = $name
             ApplicationId = $appId
+            ApplicationObjectId = $null
             ClientSecret = $secret
             TenantId = $TenantId
+            AuthType = $authType
             IsExistingServiceConnection = $false
         }
     }
@@ -2439,7 +2652,7 @@ function Update-AzDoVariableGroup {
         }
 
         # Use VSTeam command to update variable group
-        Update-VSTeamVariableGroup -ProjectName $ProjectName -Id $group.id -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description $group.description
+        Update-VSTeamVariableGroup -ProjectName $ProjectName -Id $group.id -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description $group.description | Out-Null
 
         Write-Host "Variable group '$GroupName' updated successfully."
         return $group
@@ -3367,7 +3580,13 @@ if ($environments.Count -gt 0) {
             Write-Section "Configuring Service Connection for environment '$($env.ShortName)'"
             
 
-            $script:creds = Get-PowerPlatformSCCredentials -ExistingCredentials $credentialsCache -TenantId $adoAuthResult.TenantId -ProjectName $selectedProject.Name -EnvironmentName $env.ShortName
+            $script:creds = Get-PowerPlatformSCCredentials `
+            -ExistingCredentials $credentialsCache `
+            -TenantId $adoAuthResult.TenantId `
+            -ProjectName $selectedProject.Name `
+            -EnvironmentName $env.ShortName `
+            -OrganizationId $orgId `
+            -OrganizationName $orgName
             if ($credentialsCache -notcontains $script:creds) {
                 $script:credentialsCache += $script:creds
             }
@@ -3384,27 +3603,70 @@ if ($environments.Count -gt 0) {
                 # Ignore errors checking for existing value
             }
 
-            # Get Service Account UPN
-            Write-Section "Configuring Service Account for environment '$($env.ShortName)'"
-            $script:serviceAccountUPN = Get-DataverseServiceAccountUPN -ExistingServiceAccounts $serviceAccountsCache -EnvironmentName $env.ShortName -ExistingValue $existingServiceAccountUPN
-            if ($serviceAccountsCache -notcontains $script:serviceAccountUPN) {
-                $script:serviceAccountsCache += $script:serviceAccountUPN
+        # Get Service Account UPN
+        Write-Host "Configuring Service Account for environment '$($env.ShortName)'..." -ForegroundColor Cyan
+        $script:serviceAccountUPN = Get-DataverseServiceAccountUPN -ExistingServiceAccounts $serviceAccountsCache -EnvironmentName $env.ShortName -ExistingValue $existingServiceAccountUPN
+        if ($serviceAccountsCache -notcontains $script:serviceAccountUPN) {
+            $script:serviceAccountsCache += $script:serviceAccountUPN
+        }
+        
+        $endpoint = $null
+        if (-not $script:creds.IsExistingServiceConnection) {
+            $endpointParams = @{
+                ProjectName = $selectedProject.Name
+                ServiceEndpointName = $env.ShortName
+                EnvironmentUrl = $env.Url
+                ApplicationId = $script:creds.ApplicationId
+                TenantId = $script:creds.TenantId
             }
             
-            $endpoint = $null
-            if (-not $script:creds.IsExistingServiceConnection) {
-                $endpoint = Ensure-AzDoServiceEndpoint `
-                    -ProjectName $selectedProject.Name `
-                    -ServiceEndpointName $env.ShortName `
-                    -EnvironmentUrl $env.Url `
-                    -ApplicationId $script:creds.ApplicationId `
-                    -ClientSecret $script:creds.ClientSecret `
-                    -TenantId $script:creds.TenantId
-            } else {
-                 # If it is existing, we need to fetch it to get the ID
-                 $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $selectedProject.Name -ErrorAction SilentlyContinue)
-                 $endpoint = $endpoints | Where-Object { $_.name -eq $env.ShortName } | Select-Object -First 1
+            # Add auth-specific parameters
+            if ($script:creds.AuthType -eq 'WIF') {
+                $endpointParams.AuthType = 'WIF'
             }
+            else {
+                $endpointParams.ClientSecret = $creds.ClientSecret
+                $endpointParams.AuthType = 'Secret'
+            }
+            
+            $endpoint = Ensure-AzDoServiceEndpoint @endpointParams
+
+            # For WIF, add federated identity credential using issuer/subject from the service connection
+            if ($script:creds.AuthType -eq 'WIF') {
+                $wifIssuer = $endpoint.authorization.parameters.workloadIdentityFederationIssuer
+                $wifSubject = $endpoint.authorization.parameters.workloadIdentityFederationSubject
+                if ($wifIssuer -and $wifSubject) {
+                    $appObjectId = $script:creds.ApplicationObjectId
+                    if (-not $appObjectId) {
+                        # Look up object ID from Graph API when not available (e.g. manually entered credentials)
+                        $graphToken = Get-AuthToken -ResourceUrl "https://graph.microsoft.com" -TenantId $script:creds.TenantId
+                        $gHeaders = @{ Authorization = "Bearer $($graphToken.AccessToken)" }
+                        $gUri = "https://graph.microsoft.com/v1.0/applications?`$filter=appId eq '$($script:creds.ApplicationId)'&`$select=id,appId"
+                        $gResult = Invoke-RestMethod -Uri $gUri -Headers $gHeaders -Method Get
+                        if ($gResult.value.Count -gt 0) { $appObjectId = $gResult.value[0].id }
+                    }
+                    if ($appObjectId) {
+                        $safeOrgName = ConvertTo-UrlSafeName -Name $orgName
+                        $safeProjectName = ConvertTo-UrlSafeName -Name $selectedProject.Name
+                        $safeSCName = ConvertTo-UrlSafeName -Name $env.ShortName
+                        [void](Add-EntraIdFederatedCredential `
+                            -ApplicationObjectId $appObjectId `
+                            -TenantId $script:creds.TenantId `
+                            -Issuer $wifIssuer `
+                            -Subject $wifSubject `
+                            -CredentialName "AzDO-$safeOrgName-$safeProjectName-$safeSCName")
+                    } else {
+                        Write-Warning "Could not determine Application Object ID. Federated credential not added - add it manually in Entra ID."
+                    }
+                } else {
+                    Write-Warning "Service connection does not have WIF issuer/subject properties. Federated credential not added - add it manually in Entra ID."
+                }
+            }
+        } else {
+             # If it is existing, we need to fetch it to get the ID
+             $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $selectedProject.Name -ErrorAction SilentlyContinue)
+             $endpoint = $endpoints | Where-Object { $_.name -eq $env.ShortName } | Select-Object -First 1
+        }
 
             # Authorize pipeline for Service Connection
             if ($endpoint -and $endpoint.id) {
@@ -3451,8 +3713,8 @@ if ($environments.Count -gt 0) {
                     -ProjectId $selectedProject.Id `
                     -GroupName "Environment-$($env.ShortName)" `
                     -Variables @{
-                    'CONNREF_example_uniquename' = 'connectionid'
-                    'ENVVAR_example_uniquename'  = 'value'
+                    'DATAVERSECONNREF_example_uniquename' = 'connectionid'
+                    'DATAVERSEENVVAR_example_uniquename'  = 'value'
                     'DataverseServiceAccountUPN' = $script:serviceAccountUPN
                 }
             } else {
@@ -3461,7 +3723,7 @@ if ($environments.Count -gt 0) {
                 if ($varGroup) {
                     Update-AzDoVariableGroup -ProjectName $selectedProject.Name -GroupName "Environment-Dev-main" -Variables @{
                         'DataverseServiceAccountUPN' = $script:serviceAccountUPN
-                    }
+                    } | Out-Null
                 }
             }
 

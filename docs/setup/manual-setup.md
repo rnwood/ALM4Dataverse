@@ -41,24 +41,11 @@ The manual setup process involves:
 
 ---
 
-## 2. Install Power Platform Build Tools
-
-The Power Platform Build Tools extension is required for the pipelines to work.
-
-1. Navigate to the Azure DevOps Marketplace: [Power Platform Build Tools](https://marketplace.visualstudio.com/items?itemName=microsoft-IsvExpTools.PowerPlatform-BuildTools)
-2. Click "Get it free"
-3. Select your Azure DevOps organization
-4. Click "Install"
-
-📖 **Reference**: [Install extensions](https://learn.microsoft.com/en-us/azure/devops/marketplace/install-extension)
-
----
-
-## 3. Repository Setup
+## 2. Repository Setup
 
 You need two Git repositories in your project:
 
-### 3.1 Shared Repository (ALM4Dataverse)
+### 2.1 Shared Repository (ALM4Dataverse)
 
 This repository contains the shared pipeline templates and scripts.
 
@@ -89,7 +76,7 @@ This repository contains the shared pipeline templates and scripts.
 
 📖 **Reference**: [Create a Git repo](https://learn.microsoft.com/en-us/azure/devops/repos/git/create-new-repo)
 
-### 3.2 Main Repository (Your Application)
+### 2.2 Main Repository (Your Application)
 
 This is your application repository that will contain your solution source code and pipeline definitions.
 
@@ -109,7 +96,7 @@ This is your application repository that will contain your solution source code 
 
 📖 **Reference**: [Clone a repository](https://learn.microsoft.com/en-us/azure/devops/repos/git/clone)
 
-### 3.3 Grant Build Service Permissions
+### 2.3 Grant Build Service Permissions
 
 The Build Service needs Contribute permissions on your main repository to push changes.
 
@@ -125,11 +112,17 @@ The Build Service needs Contribute permissions on your main repository to push c
 
 ---
 
-## 4. Service Principal Setup
+## 3. Service Principal Setup
 
 For each Dataverse environment (Dev, Test, UAT, Production, etc.), you need a Service Principal (App Registration) for authentication.
 
-### 4.1 Create App Registration in Entra ID
+> **Authentication Methods**: You can choose between two authentication approaches:
+> - **Service Principal with Client Secret (traditional)**: Simpler setup but requires managing and rotating secrets
+> - **Workload Identity Federation (recommended)**: More secure, no secrets to manage, uses OpenID Connect
+>
+> This guide covers both methods. Choose the approach that best fits your organization's security policies.
+
+### 3.1 Create App Registration in Entra ID
 
 1. Navigate to the [Azure Portal](https://portal.azure.com)
 2. Go to **Entra ID** (Azure Active Directory) > **App registrations**
@@ -139,7 +132,9 @@ For each Dataverse environment (Dev, Test, UAT, Production, etc.), you need a Se
 6. Click **Register**
 7. Note the **Application (client) ID** and **Directory (tenant) ID**
 
-### 4.2 Create Client Secret
+### 3.2 Configure Authentication
+
+#### Option A: Client Secret (Traditional)
 
 1. In the App Registration, go to **Certificates & secrets**
 2. Click **New client secret**
@@ -148,9 +143,26 @@ For each Dataverse environment (Dev, Test, UAT, Production, etc.), you need a Se
 5. Click **Add**
 6. **Important**: Copy the secret **Value** immediately (not the Secret ID) - you cannot view it again
 
-📖 **Reference**: [Register an application with Entra ID](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app)
+📖 **Reference**: [Add a client secret](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app#add-a-client-secret)
 
-### 4.3 Create Application User in Dataverse
+#### Option B: Workload Identity Federation (Recommended)
+
+1. In the App Registration, go to **Certificates & secrets**
+2. Go to the **Federated credentials** tab
+3. Click **Add credential**
+4. Select **Other issuer**
+5. Fill in the details:
+   - **Issuer**: Use the value shown by AzDO once you have created the SC.
+   - **Subject identifier**: Use the value shown by AzDO once you have created the SC.
+   - **Name**: `AzDO-{organizationName}-{projectName}-{serviceConnectionName}` (alphanumeric and hyphens only)
+   - **Audience**: `api://AzureADTokenExchange`
+6. Click **Add**
+
+📖 **References**: 
+- [Workload Identity Federation](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation)
+- [Configure a federated identity credential](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-create-trust)
+
+### 3.3 Create Application User in Dataverse
 
 For each Dataverse environment, create an application user with the Service Principal:
 
@@ -170,11 +182,13 @@ For each Dataverse environment, create an application user with the Service Prin
 
 ---
 
-## 5. Service Connections
+## 4. Service Connections
 
 Create a Service Connection for each Dataverse environment.
 
 ### For Each Environment (Dev-main, TEST-main, UAT-main, PROD, etc.):
+
+#### Using Client Secret Authentication:
 
 1. Go to **Project Settings** > **Service connections**
 2. Click **New service connection**
@@ -189,11 +203,31 @@ Create a Service Connection for each Dataverse environment.
 6. **Do not** check "Grant access permission to all pipelines" - we'll configure specific permissions later
 7. Click **Save**
 
-📖 **Reference**: [Power Platform service connections](https://learn.microsoft.com/en-us/power-platform/alm/devops-build-tools#configure-service-connections-using-a-service-principal)
+#### Using Workload Identity Federation:
+
+1. Go to **Project Settings** > **Service connections**
+2. Click **New service connection**
+3. Select **Power Platform**
+4. Choose **Workload Identity federation (automatic)** authentication
+5. Fill in the details:
+   - **Server URL**: Your Dataverse environment URL (e.g., `https://yourorg.crm.dynamics.com`)
+   - **Tenant Id**: The Directory (tenant) ID from your App Registration
+   - **Application (client) Id**: The Application (client) ID from your App Registration
+   - **Service Principal Id**: The Application (client) ID (same as above)
+   - **Service connection name**: Use the pattern `{EnvironmentName}-main` (e.g., `Dev-main`, `PROD`)
+     - **Important**: This must match the `{serviceConnectionName}` you used when creating the federated credential
+6. **Do not** check "Grant access permission to all pipelines" - we'll configure specific permissions later
+7. Click **Save**
+
+> **Note**: When using WIF, ensure the federated credential in your App Registration matches the subject identifier pattern `sc://{organizationName}/{projectName}/{serviceConnectionName}`
+
+📖 **References**: 
+- [Power Platform service connections with client secret](https://learn.microsoft.com/en-us/power-platform/alm/devops-build-tools#configure-service-connections-using-a-service-principal)
+- [Workload Identity Federation for Azure DevOps](https://learn.microsoft.com/en-us/azure/devops/pipelines/library/connect-to-azure#workload-identity-federation)
 
 ---
 
-## 6. Variable Groups
+## 5. Variable Groups
 
 Variable groups store environment-specific configuration values. See the [Environment Variable Group documentation](../config/environment-variable-group.md) for detailed information about what variables to configure.
 
@@ -228,7 +262,7 @@ Variable groups store environment-specific configuration values. See the [Enviro
 
 ---
 
-## 7. Environments and Approvals
+## 6. Environments and Approvals
 
 For deployment environments (not Dev), create Azure DevOps environments with approval checks.
 
@@ -252,11 +286,11 @@ For deployment environments (not Dev), create Azure DevOps environments with app
 
 ---
 
-## 8. Pipeline Creation
+## 7. Pipeline Creation
 
 Create four pipelines for your main repository.
 
-### 8.1 BUILD Pipeline
+### 7.1 BUILD Pipeline
 
 1. Go to **Pipelines** > **Pipelines**
 2. Click **New pipeline**
@@ -269,21 +303,21 @@ Create four pipelines for your main repository.
 9. Rename the pipeline to `BUILD`
 10. Move to folder: `\{MainRepositoryName}\BUILD`
 
-### 8.2 EXPORT Pipeline
+### 7.2 EXPORT Pipeline
 
 1. Repeat the same steps as BUILD
 2. Path: `/pipelines/EXPORT.yml`
 3. Rename to `EXPORT`
 4. Move to folder: `\{MainRepositoryName}\EXPORT`
 
-### 8.3 IMPORT Pipeline
+### 7.3 IMPORT Pipeline
 
 1. Repeat the same steps
 2. Path: `/pipelines/IMPORT.yml`
 3. Rename to `IMPORT`
 4. Move to folder: `\{MainRepositoryName}\IMPORT`
 
-### 8.4 DEPLOY Pipeline
+### 7.4 DEPLOY Pipeline
 
 1. Repeat the same steps
 2. Path: `/pipelines/DEPLOY-main.yml` (or your branch name)
@@ -294,7 +328,7 @@ Create four pipelines for your main repository.
 
 ---
 
-## 9. Pipeline Permissions
+## 8. Pipeline Permissions
 
 Each pipeline needs permissions to access repositories, service connections, variable groups, and environments.
 
@@ -350,9 +384,9 @@ For **DEPLOY** pipeline:
 
 ---
 
-## 10. Solution Configuration
+## 9. Solution Configuration
 
-### 10.1 Configure Solutions in alm-config.psd1
+### 9.1 Configure Solutions in alm-config.psd1
 
 Edit the `alm-config.psd1` file in your main repository to list the solutions you want to manage:
 
@@ -374,7 +408,7 @@ Edit the `alm-config.psd1` file in your main repository to list the solutions yo
 - `name`: The unique name of your Dataverse solution
 - `deployUnmanaged`: Set to `$true` if you want to deploy as unmanaged (typically only for Dev), `$false` for managed
 
-### 10.2 Configure Deployment Environments
+### 9.2 Configure Deployment Environments
 
 Edit the `pipelines/DEPLOY-main.yml` (or `DEPLOY-{branch}.yml`) file to add your deployment stages:
 
@@ -395,6 +429,6 @@ stages:
 
 Add or remove stages based on your environment structure. The environments will deploy in sequence (TEST first, then UAT, then PROD).
 
-### 10.3 Commit and Push
+### 9.3 Commit and Push
 
 Commit the changes to `alm-config.psd1` and `pipelines/DEPLOY-main.yml` and push to your repository.
