@@ -15,7 +15,9 @@
 
 - Entra ID Applications:
     - if created automatically, will have name in format '<project name> - <env name> deployment' (but you can safely rename them if you wish after creation).
-    - will use the 'Client Secret' auth type (Workflow Identity Federation coming soon.
+    - you will be prompted to choose between two authentication types:
+      - **Service Principal with Secret (traditional)**: Uses a client secret that expires and needs periodic renewal
+      - **Workload Identity Federation (recommended)**: Uses OpenID Connect federation with no secrets to manage
 
 ## Pre-requisites
 
@@ -73,4 +75,7 @@ The easiest way to run setup is:
 7) Prompts you to select the solutions to be managed in dependency order and edits the `alm-config.psd1` file
 8) Prompts you to select Dataverse environments to be used as the deployment targets (your test and prod environment) and creates the required variable groups and service connections.
 9) For both the dev environment and all deployment environments prompts you to select the Entra ID application (service principal) you want to use, with an option to create automatically.
-10) For both the dev environment and all deployment environments prompts you to select the Service Account (user account) you want to use. This must be pre-existing as no option to create it is given.
+10) For each selected service principal, prompts you to choose the authentication type:
+    - **Service Principal with Secret**: Traditional approach using client secrets
+    - **Workload Identity Federation**: Modern approach using federated credentials (no secrets required)
+11) For both the dev environment and all deployment environments prompts you to select the Service Account (user account) you want to use. This must be pre-existing as no option to create it is given.
