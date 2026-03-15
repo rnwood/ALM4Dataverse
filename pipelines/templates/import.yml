@@ -20,7 +20,7 @@ stages:
           inputs:
             AddToolsToPath: true
 
-        - task: ALM4Dataverse.alm4dataverse-azdo-extensions.alm4dataverse-set-connection-variables.ALM4DataverseSetConnectionVariables
+        - task: ALM4Dataverse.alm4dataverse-azdo-extensions.alm4dataverse-set-connection-variables.ALM4DataverseSetConnectionVariables@1
           displayName: 'Set Connection Variables'
           name: connectionVariables
           inputs:

@@ -810,39 +810,49 @@ Write-Host "VSTeam configured for organization '$orgName' using a bearer token."
 
 Write-Section "Ensuring Needed Extensions are Enabled"
 
-$requiredExtension = "microsoft-IsvExpTools.PowerPlatform-BuildTools"
-Invoke-WithErrorHandling -OperationName "Installing Power Platform Build Tools Extension" -ScriptBlock {
-    # Check if the extension is already installed
-    $installedExtensions = Get-VSTeamExtension
-    $ppBuildTools = $installedExtensions | Where-Object { $_.publisherId -eq "microsoft-IsvExpTools" -and $_.extensionId -eq "PowerPlatform-BuildTools" }
-    
-    if ($ppBuildTools) {
-        Write-Host "Power Platform Build Tools extension is already installed (Version: $($ppBuildTools.version))."
-    }
-    else {
-        if (-not (Read-YesNo -Prompt "Power Platform Build Tools extension not found. Install it?")) {
-            throw "Power Platform Build Tools extension is required. Setup cannot continue without it."
-        }
-        Write-Host "Power Platform Build Tools extension not found. Installing..." -ForegroundColor Yellow
-        Write-Host "This may require organization administrative permissions." -ForegroundColor Yellow
-        
-        # Install the extension
-        Install-VSTeamExtension -PublisherId "microsoft-IsvExpTools" -ExtensionId "PowerPlatform-BuildTools"
-        
-        # Verify installation
+$requiredExtensions = @(
+    "microsoft-IsvExpTools.PowerPlatform-BuildTools",
+    "ALM4Dataverse.alm4dataverse-azdo-extensions"
+)
+
+foreach ($requiredExtension in $requiredExtensions) {
+    $parts = $requiredExtension -split '\.'
+    $publisherId = $parts[0]
+    $extensionId = $parts[1..($parts.Length - 1)] -join '.'
+
+    Invoke-WithErrorHandling -OperationName "Installing extension '$requiredExtension'" -ScriptBlock {
+        # Check if the extension is already installed
         $installedExtensions = Get-VSTeamExtension
-        $ppBuildTools = $installedExtensions | Where-Object { $_.publisherId -eq "microsoft-IsvExpTools" -and $_.extensionId -eq "PowerPlatform-BuildTools" }
+        $installed = $installedExtensions | Where-Object { $_.publisherId -eq $publisherId -and $_.extensionId -eq $extensionId }
         
-        if ($ppBuildTools) {
-            Write-Host "Power Platform Build Tools extension installed successfully (Version: $($ppBuildTools.version))."
+        if ($installed) {
+            Write-Host "Extension '$requiredExtension' is already installed (Version: $($installed.version))."
         }
         else {
-            Write-Host "Please install the extension manually from:" -ForegroundColor Yellow
-            Write-Host "https://marketplace.visualstudio.com/acquisition?itemName=microsoft-IsvExpTools.PowerPlatform-BuildTools" -ForegroundColor Yellow
-            throw "Failed to verify Power Platform Build Tools extension installation after install command completed."
+            if (-not (Read-YesNo -Prompt "Extension '$requiredExtension' not found. Install it?")) {
+                throw "Extension '$requiredExtension' is required. Setup cannot continue without it."
+            }
+            Write-Host "Extension '$requiredExtension' not found. Installing..." -ForegroundColor Yellow
+            Write-Host "This may require organization administrative permissions." -ForegroundColor Yellow
+            
+            # Install the extension
+            Install-VSTeamExtension -PublisherId $publisherId -ExtensionId $extensionId
+            
+            # Verify installation
+            $installedExtensions = Get-VSTeamExtension
+            $installed = $installedExtensions | Where-Object { $_.publisherId -eq $publisherId -and $_.extensionId -eq $extensionId }
+            
+            if ($installed) {
+                Write-Host "Extension '$requiredExtension' installed successfully (Version: $($installed.version))."
+            }
+            else {
+                Write-Host "Please install the extension manually from:" -ForegroundColor Yellow
+                Write-Host "https://marketplace.visualstudio.com/acquisition?itemName=$requiredExtension" -ForegroundColor Yellow
+                throw "Failed to verify extension '$requiredExtension' installation after install command completed."
+            }
         }
-    }
-} | Out-Null
+    } | Out-Null
+}
 
 Write-Section "Select target Azure DevOps Project"
 
