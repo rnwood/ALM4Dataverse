@@ -41,3 +41,5 @@ stages:
                       -ArtifactsPath "$(Pipeline.Workspace)/build/artifacts"
                   displayName: 'Connect and Run Deployment Script from Artifacts'
                   workingDirectory: '$(Pipeline.Workspace)/build/artifacts'
+                  env:
+                    AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)

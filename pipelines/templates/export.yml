@@ -43,6 +43,8 @@ stages:
                 -EnvironmentName "Dev-${{ variables['Build.SourceBranchName'] }}"
           displayName: 'Connect and Export Solutions'
           workingDirectory: '$(Pipeline.Workspace)/self'
+          env:
+            AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
 
         - pwsh: |
             $ErrorActionPreference = 'Stop'
