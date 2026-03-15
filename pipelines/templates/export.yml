@@ -28,7 +28,7 @@ stages:
 
         - task: ALM4Dataverse.alm4dataverse-azdo-extensions.alm4dataverse-set-connection-variables.ALM4DataverseSetConnectionVariables@1
           displayName: 'Set Connection Variables'
-          name: connectionVariables
+          name: ALM4DataverseSetConnectionVariables
           inputs:
             authenticationType: 'PowerPlatformSPN'
             PowerPlatformSPN: Dev-${{ variables['Build.SourceBranchName'] }}
