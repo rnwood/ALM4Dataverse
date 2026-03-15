@@ -2103,6 +2103,9 @@ function Ensure-AzDoServiceEndpoint {
 
         Write-Host "Service Endpoint '$ServiceEndpointName' created successfully."
         Start-Sleep -Seconds 5 # Wait a bit for SE to be fully available
+        # Re-fetch to ensure we have all properties including WIF issuer/subject assigned by Azure DevOps
+        $fetched = @(Get-VSTeamServiceEndpoint -ProjectName $ProjectName -ErrorAction SilentlyContinue) | Where-Object { $_.name -eq $ServiceEndpointName } | Select-Object -First 1
+        if ($fetched) { return $fetched }
         return $response
     }
     catch {
@@ -2166,10 +2169,9 @@ function Add-EntraIdFederatedCredential {
     param(
         [Parameter(Mandatory)][string]$ApplicationObjectId,
         [Parameter(Mandatory)][string]$TenantId,
-        [Parameter(Mandatory)][string]$OrganizationId,
-        [Parameter(Mandatory)][string]$OrganizationName,
-        [Parameter(Mandatory)][string]$ProjectName,
-        [Parameter(Mandatory)][string]$ServiceConnectionName
+        [Parameter(Mandatory)][string]$Issuer,
+        [Parameter(Mandatory)][string]$Subject,
+        [Parameter(Mandatory)][string]$CredentialName
     )
 
     $graphToken = Get-AuthToken -ResourceUrl "https://graph.microsoft.com" -TenantId $TenantId
@@ -2178,15 +2180,9 @@ function Add-EntraIdFederatedCredential {
         "Content-Type" = "application/json"
     }
 
-    # Build the federated credential properties
-    $issuer = "https://vstoken.dev.azure.com/$OrganizationId"
-    $subject = "sc://$OrganizationName/$ProjectName/$ServiceConnectionName"
-    
-    # Create URL-safe name for the credential
-    $safeOrgName = ConvertTo-UrlSafeName -Name $OrganizationName
-    $safeProjectName = ConvertTo-UrlSafeName -Name $ProjectName
-    $safeSCName = ConvertTo-UrlSafeName -Name $ServiceConnectionName
-    $credentialName = "AzDO-$safeOrgName-$safeProjectName-$safeSCName"
+    $issuer = $Issuer
+    $subject = $Subject
+    $credentialName = $CredentialName
 
     Write-Host "Adding federated identity credential '$credentialName'..." -ForegroundColor Yellow
 
@@ -2231,11 +2227,7 @@ function New-EntraIdApplication {
     param(
         [Parameter(Mandatory)][string]$DisplayName,
         [Parameter(Mandatory)][string]$TenantId,
-        [Parameter()][string]$AuthType = 'Secret',
-        [Parameter()][string]$OrganizationId,
-        [Parameter()][string]$OrganizationName,
-        [Parameter()][string]$ProjectName,
-        [Parameter()][string]$ServiceConnectionName
+        [Parameter()][string]$AuthType = 'Secret'
     )
     
     # Get token for Graph
@@ -2278,21 +2270,7 @@ function New-EntraIdApplication {
         IsExistingServiceConnection = $false
     }
 
-    if ($AuthType -eq 'WIF') {
-        # Add federated identity credential for Workload Identity Federation
-        if (-not $OrganizationId -or -not $OrganizationName -or -not $ProjectName -or -not $ServiceConnectionName) {
-            throw "OrganizationId, OrganizationName, ProjectName, and ServiceConnectionName are required for WIF authentication."
-        }
-
-        [void](Add-EntraIdFederatedCredential `
-            -ApplicationObjectId $app.id `
-            -TenantId $TenantId `
-            -OrganizationId $OrganizationId `
-            -OrganizationName $OrganizationName `
-            -ProjectName $ProjectName `
-            -ServiceConnectionName $ServiceConnectionName)
-    }
-    else {
+    if ($AuthType -ne 'WIF') {
         # Create secret for traditional authentication
         Write-Host "Creating client secret..." -ForegroundColor Yellow
         $secretBody = @{
@@ -2421,11 +2399,7 @@ function Get-PowerPlatformSCCredentials {
             return New-EntraIdApplication `
                 -DisplayName $appName `
                 -TenantId $TenantId `
-                -AuthType 'WIF' `
-                -OrganizationId $OrganizationId `
-                -OrganizationName $OrganizationName `
-                -ProjectName $ProjectName `
-                -ServiceConnectionName $EnvironmentName
+                -AuthType 'WIF'
         }
         else {
             return New-EntraIdApplication `
@@ -3646,6 +3620,38 @@ if ($environments.Count -gt 0) {
             }
             
             $endpoint = Ensure-AzDoServiceEndpoint @endpointParams
+
+            # For WIF, add federated identity credential using issuer/subject from the service connection
+            if ($script:creds.AuthType -eq 'WIF') {
+                $wifIssuer = $endpoint.authorization.parameters.workloadIdentityFederationIssuer
+                $wifSubject = $endpoint.authorization.parameters.workloadIdentityFederationSubject
+                if ($wifIssuer -and $wifSubject) {
+                    $appObjectId = $script:creds.ApplicationObjectId
+                    if (-not $appObjectId) {
+                        # Look up object ID from Graph API when not available (e.g. manually entered credentials)
+                        $graphToken = Get-AuthToken -ResourceUrl "https://graph.microsoft.com" -TenantId $script:creds.TenantId
+                        $gHeaders = @{ Authorization = "Bearer $($graphToken.AccessToken)" }
+                        $gUri = "https://graph.microsoft.com/v1.0/applications?`$filter=appId eq '$($script:creds.ApplicationId)'&`$select=id,appId"
+                        $gResult = Invoke-RestMethod -Uri $gUri -Headers $gHeaders -Method Get
+                        if ($gResult.value.Count -gt 0) { $appObjectId = $gResult.value[0].id }
+                    }
+                    if ($appObjectId) {
+                        $safeOrgName = ConvertTo-UrlSafeName -Name $orgName
+                        $safeProjectName = ConvertTo-UrlSafeName -Name $selectedProject.Name
+                        $safeSCName = ConvertTo-UrlSafeName -Name $env.ShortName
+                        [void](Add-EntraIdFederatedCredential `
+                            -ApplicationObjectId $appObjectId `
+                            -TenantId $script:creds.TenantId `
+                            -Issuer $wifIssuer `
+                            -Subject $wifSubject `
+                            -CredentialName "AzDO-$safeOrgName-$safeProjectName-$safeSCName")
+                    } else {
+                        Write-Warning "Could not determine Application Object ID. Federated credential not added - add it manually in Entra ID."
+                    }
+                } else {
+                    Write-Warning "Service connection does not have WIF issuer/subject properties. Federated credential not added - add it manually in Entra ID."
+                }
+            }
         } else {
              # If it is existing, we need to fetch it to get the ID
              $endpoints = @(Get-VSTeamServiceEndpoint -ProjectName $selectedProject.Name -ErrorAction SilentlyContinue)

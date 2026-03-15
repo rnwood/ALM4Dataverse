@@ -165,13 +165,8 @@ For each Dataverse environment (Dev, Test, UAT, Production, etc.), you need a Se
 3. Click **Add credential**
 4. Select **Other issuer**
 5. Fill in the details:
-   - **Issuer**: `https://vstoken.dev.azure.com/{organizationId}` 
-     - Replace `{organizationId}` with your Azure DevOps organization ID (GUID)
-     - To find your organization ID: Use the Azure DevOps REST API or see it in the setup script output
-   - **Subject identifier**: `sc://{organizationName}/{projectName}/{serviceConnectionName}`
-     - Replace `{organizationName}` with your Azure DevOps organization name
-     - Replace `{projectName}` with your Azure DevOps project name
-     - Replace `{serviceConnectionName}` with the service connection name you'll create (e.g., `Dev-main`, `PROD`)
+   - **Issuer**: Use the value shown by AzDO once you have created the SC.
+   - **Subject identifier**: Use the value shown by AzDO once you have created the SC.
    - **Name**: `AzDO-{organizationName}-{projectName}-{serviceConnectionName}` (alphanumeric and hyphens only)
    - **Audience**: `api://AzureADTokenExchange`
 6. Click **Add**

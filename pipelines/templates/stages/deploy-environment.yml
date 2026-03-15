@@ -24,7 +24,7 @@ stages:
                   inputs:
                     AddToolsToPath: true
                 
-                - task: PowerPlatformSetConnectionVariables@2
+                - task: ALM4Dataverse.alm4dataverse-azdo-extensions.alm4dataverse-set-connection-variables.ALM4DataverseSetConnectionVariables
                   displayName: 'Set Connection Variables'
                   name: connectionVariables
                   inputs:
@@ -33,7 +33,7 @@ stages:
                 
                 - pwsh: |
                     & "$(Pipeline.Workspace)/build/artifacts/alm/pipelines/scripts/installdependencies.ps1"
-                    & "$(Pipeline.Workspace)/build/artifacts/alm/pipelines/scripts/connect.ps1" -ConnectionString "$(connectionVariables.BuildTools.DataverseConnectionString)"
+                    & "$(Pipeline.Workspace)/build/artifacts/alm/pipelines/scripts/connect.ps1" -Url $(ALM4DataverseSetConnectionVariables.EnvironmentUrl)
                     
                     # Run the deployment script FROM THE ARTIFACTS
                     # This ensures the script version matches the solution version being deployed
