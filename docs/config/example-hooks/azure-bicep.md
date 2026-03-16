@@ -45,7 +45,7 @@ The `postBuild` hook validates the Bicep file by compiling it to ARM JSON. This 
 
 The hook runs after all solutions are packed and assets are copied, so `$Context.ArtifactStagingDirectory` points to the output folder. The Bicep source file is in `$Context.SourceDirectory`.
 
-This step uses the standalone [`bicep` CLI](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/install) for validation, which is a local-only operation that requires no Azure connection or credentials. Ensure the `bicep` CLI is installed on your build agent.
+`az bicep build` compiles the Bicep file locally using the Bicep CLI embedded in `az`. It requires no Azure authentication. The Bicep CLI must be available on the build agent — run `az bicep install` as part of your agent setup if it is not already present.
 
 *azure/validate-bicep.ps1*
 
@@ -54,7 +54,7 @@ param($Context)
 
 Write-Host "Validating Bicep template..."
 
-bicep build (Join-Path $Context.SourceDirectory 'azure/main.bicep')
+az bicep build --file (Join-Path $Context.SourceDirectory 'azure/main.bicep')
 
 if ($LASTEXITCODE -ne 0) {
     throw "Bicep validation failed"
