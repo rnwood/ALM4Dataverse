@@ -2,6 +2,10 @@ parameters:
 - name: commitMessage
   type: string
   displayName: 'Commit message for exported changes'
+- name: env
+  type: object
+  default: {}
+  displayName: 'Additional environment variables to expose to hook scripts (use for secrets)'
 
 stages:
   - stage: Export
@@ -45,6 +49,8 @@ stages:
           workingDirectory: '$(Pipeline.Workspace)/self'
           env:
             AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
+            ${{ each pair in parameters.env }}:
+              ${{ pair.key }}: ${{ pair.value }}
 
         - pwsh: |
             $ErrorActionPreference = 'Stop'
