@@ -120,6 +120,16 @@ scriptDependencies = @{
 When build assets are generated, the version that has been selected is frozen and baked into the configuration file that will be used when deploying.
 This ensures that the same exact version of all dependencies is always used for each release, even across extended time period and environments.
 
+### Import Timeout
+
+The `importTimeoutSeconds` setting controls how long each solution import is allowed to run before timing out. The default is 1800 seconds (30 minutes).
+
+```powershell
+importTimeoutSeconds = 1800
+```
+
+Increase this value if solution imports time out in large or complex environments.
+
 ## Advanced - Fork Configuration
 
 To customize this configuration in a custom fork, you can edit the `alm-config-defaults.psd1` file in the ALM4Dataverse repository root.
