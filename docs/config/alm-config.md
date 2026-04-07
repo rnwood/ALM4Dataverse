@@ -122,10 +122,10 @@ This ensures that the same exact version of all dependencies is always used for 
 
 ### Import Timeout
 
-The `importTimeoutSeconds` setting controls how long each solution import is allowed to run before timing out. The default is 1800 seconds (30 minutes).
+The `importTimeoutSeconds` setting controls how long each solution import is allowed to run before timing out. The default is 10800 seconds (3 hours).
 
 ```powershell
-importTimeoutSeconds = 1800
+importTimeoutSeconds = 10800
 ```
 
 Increase this value if solution imports time out in large or complex environments.

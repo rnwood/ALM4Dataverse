@@ -98,7 +98,7 @@
         # 'PnP.PowerShell' = '1.12.0'
     }
 
-    # Timeout in seconds for each solution import operation (default: 1800).
+    # Timeout in seconds for each solution import operation (default: 10800).
     # Increase this value if solution imports time out in large or complex environments.
-    # importTimeoutSeconds = 1800
+    # importTimeoutSeconds = 10800
 }
