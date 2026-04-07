@@ -75,6 +75,7 @@ Get-ChildItem Env: | Where-Object { $_.Name -like "DataverseEnvVar_*" } | ForEac
 
 # Stage all solutions first (in dependency order)
 Write-Host "##[section]Staging solutions"
+$importTimeoutSeconds = if ($null -ne $solutionsConfig.importTimeoutSeconds) { $solutionsConfig.importTimeoutSeconds } else { 10800 }
 $connectionReferences.GetEnumerator() | ForEach-Object {
     Write-Host "##[debug]Connection Reference: $($_.Key) = $($_.Value)"
 }
@@ -99,7 +100,7 @@ foreach ($solution in $solutions) {
         -Verbose `
         -InFile $solution.File `
         -Mode $mode `
-        -TimeoutSeconds 600 `
+        -TimeoutSeconds $importTimeoutSeconds `
         -EnvironmentVariables $environmentVariables `
         -ConnectionReferences $connectionReferences `
         -OverwriteUnmanagedCustomizations:(-not $UseUnmanagedSolutions) `
