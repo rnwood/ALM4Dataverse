@@ -8,6 +8,8 @@ stages:
     displayName: 'Export'
     jobs:
       - job: ExportJob
+        pool: 
+          vmImage: windows-2022
         displayName: 'Export'
         steps:
         - checkout: self
