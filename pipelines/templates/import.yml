@@ -3,6 +3,8 @@ stages:
     displayName: 'Import'
     jobs:
       - job: ImportJob
+        pool: 
+          vmImage: windows-2022
         displayName: 'Import'
         steps:
         - checkout: self

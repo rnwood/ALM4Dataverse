@@ -3,6 +3,8 @@ stages:
     displayName: 'Build'
     jobs:
       - job: BuildJob
+        pool: 
+          vmImage: windows-2022
         displayName: 'Build'
         steps:
         - checkout: self
