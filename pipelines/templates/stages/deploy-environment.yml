@@ -45,7 +45,7 @@ stages:
                       $environmentUrl = "$(ALM4DataverseSetConnectionVariables.EnvironmentUrl)"
                     ${{ if ne(parameters.useAlm4DataverseExtension, true) }}:
                       $environmentUrl = "${{ parameters.environmentUrl }}"
-                    if ([string]::IsNullOrWhiteSpace($environmentUrl)) {
+                    if ([string]::IsNullOrWhiteSpace($environmentUrl) -or $environmentUrl -match '^\$\(.+\)$') {
                       throw "Environment URL is required. Set useAlm4DataverseExtension=true or pass environmentUrl from variables (for example: `$(EnvironmentUrl)`)."
                     }
                     & "$(Pipeline.Workspace)/build/artifacts/alm/pipelines/scripts/connect.ps1" -Url $environmentUrl
