@@ -4,9 +4,9 @@ This document describes service connection options for Azure DevOps environments
 
 ## Overview
 
-When `useAlm4DataverseExtension: true`, pipelines use Power Platform service connections and the Power Platform Build Tools **Set Connection Variables** task to resolve authentication details (`EnvironmentUrl`, `ApplicationId`, `TenantId`, `ClientSecret`).
+When `useAlm4DataverseExtension: true`, pipelines use Power Platform service connections and the ALM4Dataverse extension **Set Connection Variables** task.
 
-When `useAlm4DataverseExtension: false`, client secret authentication can be provided directly from variable groups/pipeline variables (`EnvironmentUrl`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`) without using the service connection task.
+When `useAlm4DataverseExtension: false`, pipelines still use Power Platform service connections, but use Power Platform Build Tools **Set Connection Variables** task (`PowerPlatformSetConnectionVariables@2`). In this mode, only service-principal-with-secret authentication is available.
 
 For detailed steps on creating service principals and service connections, see the [Manual Setup Guide](../setup/manual-setup.md#4-service-principal-setup).
 

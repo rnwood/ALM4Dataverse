@@ -810,16 +810,19 @@ Write-Host "VSTeam configured for organization '$orgName' using a bearer token."
 
 Write-Section "Ensuring Needed Extensions are Enabled"
 
-# Service-connection variable resolution is required for WIF flow.
-$script:useAlm4DataverseExtension = Read-YesNo -Prompt "Use the Power Platform 'Set Connection Variables' task for connection variable resolution? (required for Workload Identity Federation)"
+# ALM4Dataverse extension mode is required for WIF flow.
+$script:useAlm4DataverseExtension = Read-YesNo -Prompt "Use ALM4Dataverse AzDO extension for connection variable resolution? (required for Workload Identity Federation)"
 if (-not $script:useAlm4DataverseExtension) {
-    Write-Host "Service-connection resolution disabled. Setup will configure pipeline defaults for variable-based client secret auth." -ForegroundColor Yellow
-    Write-Host "Ensure each Environment-* variable group includes EnvironmentUrl, AZURE_CLIENT_ID, AZURE_TENANT_ID, and AZURE_CLIENT_SECRET (secret)." -ForegroundColor Yellow
+    Write-Host "ALM4Dataverse extension mode disabled. Setup will use the PPBT Set Connection Variables task for service-connection-based client secret auth." -ForegroundColor Yellow
 }
 
 $requiredExtensions = @(
     "microsoft-IsvExpTools.PowerPlatform-BuildTools"
 )
+
+if ($script:useAlm4DataverseExtension) {
+    $requiredExtensions += "ALM4Dataverse.alm4dataverse-azdo-extensions"
+}
 
 foreach ($requiredExtension in $requiredExtensions) {
     $parts = $requiredExtension -split '\.'
@@ -1377,8 +1380,7 @@ function Sync-CopyToYourRepoIntoGitRepo {
             }
             elseif (-not $UseAlm4DataverseExtension -and $normalizedRelativePath -in @('pipelines/EXPORT.yml', 'pipelines/IMPORT.yml')) {
                 $content = Get-Content -LiteralPath $file.FullName -Raw
-                $replacement = '${1}false' + "`n" + '    environmentUrl: $(EnvironmentUrl)'
-                $content = $content -replace '(?m)^(\s*useAlm4DataverseExtension:\s*)true\s*$', $replacement
+                $content = $content -replace '(?m)^(\s*useAlm4DataverseExtension:\s*)true\s*$', '${1}false'
 
                 $tempFile = [System.IO.Path]::GetTempFileName()
                 $content | Set-Content -LiteralPath $tempFile -NoNewline
@@ -2428,7 +2430,7 @@ function Get-PowerPlatformSCCredentials {
             $authType = if ($authTypeSelection -eq 1) { 'Secret' } else { 'WIF' }
         }
         else {
-            Write-Host "Using Service Principal with Secret authentication because service-connection variable resolution is disabled." -ForegroundColor Yellow
+            Write-Host "Using Service Principal with Secret authentication because ALM4Dataverse extension mode is disabled." -ForegroundColor Yellow
         }
         
         $appName = "$ProjectName - $EnvironmentName - deployment"
@@ -2448,7 +2450,7 @@ function Get-PowerPlatformSCCredentials {
     }
     elseif ($action.Type -eq 'ExistingSCApp') {
         if (-not $UseAlm4DataverseExtension) {
-            throw "Reusing existing service connection credentials requires service-connection variable resolution. Enable it or enter Service Principal details manually."
+            throw "Reusing existing service connection credentials requires ALM4Dataverse extension mode. Enable extension mode or enter Service Principal details manually."
         }
         $app = $action.App
         Write-Host "Using existing service connection with App: $($app.displayName) ($($app.appId))" -ForegroundColor Cyan
@@ -2494,7 +2496,7 @@ function Get-PowerPlatformSCCredentials {
             $authType = if ($authTypeSelection -eq 0) { 'Secret' } else { 'WIF' }
         }
         else {
-            Write-Host "Using Service Principal with Secret authentication because service-connection variable resolution is disabled." -ForegroundColor Yellow
+            Write-Host "Using Service Principal with Secret authentication because ALM4Dataverse extension mode is disabled." -ForegroundColor Yellow
         }
         
         $secret = $null
@@ -3533,9 +3535,6 @@ function Update-DeployPipelineInMainRepo {
             $newStages += "    parameters:`n"
             $newStages += "      environmentName: $($env.ShortName)`n"
             $newStages += "      useAlm4DataverseExtension: $($UseAlm4DataverseExtension.ToString().ToLowerInvariant())`n"
-            if (-not $UseAlm4DataverseExtension) {
-                $newStages += "      environmentUrl: `$(EnvironmentUrl)`n"
-            }
         }
 
         Add-Content -LiteralPath $deployYamlPath -Value $newStages

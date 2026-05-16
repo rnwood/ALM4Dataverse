@@ -25,17 +25,6 @@ For example:
 
 ## Required Variables
 
-### Authentication Variables (when not using ALM4Dataverse AzDO extension)
-
-If your pipelines set `useAlm4DataverseExtension: false`, each environment variable group must include:
-
-- `EnvironmentUrl` (for example `https://yourorg.crm.dynamics.com`)
-- `AZURE_CLIENT_ID`
-- `AZURE_TENANT_ID`
-- `AZURE_CLIENT_SECRET` (mark as secret)
-
-These variables enable client-secret authentication without requiring the ALM4Dataverse AzDO extension task.
-
 ### Connection Reference Variables
 
 Connection references in Dataverse solutions must be configured to point to the correct connection in each environment.

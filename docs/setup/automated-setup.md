@@ -67,9 +67,9 @@ The easiest way to run setup is:
 1) Prompts you to authenticate. The account you select will be used when connecting to AzDO and Dataverse environments during setup. 
 2) Ensures the required Power Platform AzDO Extension is installed in the target AzDO.
    If you have the required level of access it will be enabled automatically.
-3) Prompts whether to use the Power Platform Build Tools **Set Connection Variables** task for connection-variable resolution.
+3) Prompts whether to use the ALM4Dataverse extension task for connection-variable resolution.
    - If enabled, setup can use either client secret or workload identity federation authentication.
-   - If disabled, setup configures pipeline defaults for variable-based client secret auth.
+   - If disabled, setup configures pipelines to use the Power Platform Build Tools **Set Connection Variables** task with service-principal secret auth.
 4) Prompts you to select an existing AzDO project, or create a new one.
    If you select the option to create a new one, you will be prompted for the name and process template.
 5) Imports or updates the shared `ALM4Dataverse` repo.
@@ -81,5 +81,5 @@ The easiest way to run setup is:
 11) For each selected service principal, prompts you to choose the authentication type:
      - **Service Principal with Secret**: Traditional approach using client secrets
      - **Workload Identity Federation**: Modern approach using federated credentials (no secrets required)
-    - When service-connection variable resolution is disabled, only **Service Principal with Secret** is available.
+    - When ALM4Dataverse extension mode is disabled, only **Service Principal with Secret** is available.
 12) For both the dev environment and all deployment environments prompts you to select the Service Account (user account) you want to use. This must be pre-existing as no option to create it is given.
