@@ -39,14 +39,4 @@ The Power Platform Build Tools extension is required for the pipelines to work. 
 
 ## ALM4Dataverse AzDO Extensions
 
-The ALM4Dataverse AzDO Extensions extension is optional.
-
-- **Required** when using Workload Identity Federation (WIF)
-- **Optional** when using client secret auth with `useAlm4DataverseExtension: false` and environment variables (`EnvironmentUrl`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`) provided via variable groups/pipeline variables
-
-1. Navigate to the Azure DevOps Marketplace: [ALM4Dataverse Azure DevOps Extensions](https://marketplace.visualstudio.com/items?itemName=ALM4Dataverse.alm4dataverse-azdo-extensions)
-2. Click "Get it free"
-3. Select your Azure DevOps organization
-4. Click "Install"
-
-📖 **Reference**: [Install extensions](https://learn.microsoft.com/en-us/azure/devops/marketplace/install-extension)
+The ALM4Dataverse AzDO Extensions marketplace extension is not required for the standard ALM4Dataverse pipeline templates.
