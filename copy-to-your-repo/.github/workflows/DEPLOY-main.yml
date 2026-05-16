@@ -9,14 +9,22 @@ name: DEPLOY-main
 #
 # ── MANUAL (workflow_dispatch) ─────────────────────────────────────────────────
 # Choose the target environment and provide the BUILD run ID.
-#
 # Only the job whose environment matches the selected target will run.
-# Higher environments (UAT, PROD) check a gate tag to confirm the previous
-# stage completed successfully for this build before proceeding — the workflow
-# fails immediately with a clear error if the gate tag is absent.
 #
-# This enforces ordered promotion without environment protection rules and works
-# on all GitHub licence levels including GitHub Free.
+# ── PROMOTION STRATEGY: choose one ────────────────────────────────────────────
+#
+# A) GitHub Free (default — enabled below)
+#    Higher environments are deployed by manually re-triggering this workflow
+#    with the desired `target-environment`.  The deploy-prod job checks a git tag
+#    to confirm TEST was successfully deployed first (gate tag mechanism).
+#    No environment protection rules required.
+#
+# B) GitHub Pro / Team / Enterprise (opt-in — see commented-out blocks below)
+#    If your plan supports environment protection rules, you can use `needs:`
+#    chaining instead.  deploy-test succeeds → deploy-prod is queued but paused
+#    by the "Required reviewers" protection rule → an approver clicks Approve →
+#    deployment proceeds automatically.  No manual re-trigger required.
+#    To switch: comment out each deploy-prod (A) block and uncomment (B).
 #
 # SETUP REQUIRED:
 #   1. Uncomment/duplicate the deploy-* blocks below for each target environment.
@@ -60,9 +68,6 @@ jobs:
   # repo:{owner}/{repo}:environment:{env-name}.  Do NOT set AZURE_CLIENT_SECRET.
   #
   # Approach 2 (client secret): also set AZURE_CLIENT_SECRET in the environment.
-  #
-  # For GitHub Pro/Team/Enterprise, optionally add "Required reviewers" protection
-  # rules to each environment — the gate tag mechanism also works alongside them.
 
   deploy-test:
     # Runs automatically when BUILD succeeds on main.
@@ -90,6 +95,13 @@ jobs:
               || github.event.workflow_run.id }}
     secrets: inherit   # passes AZURE_CLIENT_ID, AZURE_TENANT_ID (and AZURE_CLIENT_SECRET if set)
 
+  # ── deploy-prod (A): GitHub Free — manual re-trigger + gate tag (DEFAULT) ────
+  #
+  # A human triggers this workflow manually (Actions > DEPLOY-main > Run workflow)
+  # and selects PROD from the dropdown.  The job checks the TEST gate tag to
+  # confirm that TEST was successfully deployed for the same build before
+  # proceeding.  Works on all licence levels including GitHub Free.
+
   deploy-prod:
     # Manual only — runs when PROD is chosen as the target.
     # Gate: fails immediately if TEST has not been successfully deployed for
@@ -108,6 +120,45 @@ jobs:
       required-gate-tag: deployed/TEST-main/${{ inputs.build-run-id }}
       success-gate-tag:  deployed/PROD/${{ inputs.build-run-id }}
     secrets: inherit
+
+  # ── deploy-prod (B): GitHub Pro/Team/Enterprise — auto-chain + approval gate ─
+  #
+  # If your plan supports environment protection rules (required reviewers):
+  #   1. Comment out the deploy-prod (A) block above.
+  #   2. Uncomment this block.
+  #   3. In Settings > Environments > PROD, add "Required reviewers".
+  #
+  # deploy-test succeeds → deploy-prod is queued immediately but paused by the
+  # "Required reviewers" rule → an approver clicks Approve in the Actions UI →
+  # deployment proceeds automatically.  No manual re-trigger required.
+
+  # deploy-prod:
+  #   needs: deploy-test
+  #   if: >-
+  #     always() && (
+  #       (github.event_name == 'workflow_run' &&
+  #        needs.deploy-test.result == 'success') ||
+  #       (github.event_name == 'workflow_dispatch' &&
+  #        inputs.target-environment == 'PROD')
+  #     )
+  #   uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy-environment-reusable.yml@stable
+  #   permissions:
+  #     actions: read
+  #     contents: write  # required to push the success gate tag
+  #     id-token: write  # required for WIF / OIDC
+  #   with:
+  #     environment-name: PROD
+  #     build-run-id: >-
+  #       ${{ github.event_name == 'workflow_dispatch'
+  #             && inputs.build-run-id
+  #             || github.event.workflow_run.id }}
+  #     # No required-gate-tag: the environment protection rule is the gate.
+  #     # Gate tag still pushed for auditability.
+  #     success-gate-tag: >-
+  #       deployed/PROD/${{ github.event_name == 'workflow_dispatch'
+  #             && inputs.build-run-id
+  #             || github.event.workflow_run.id }}
+  #   secrets: inherit
 
 
   # ── APPROACH 3: Prefixed global secrets (all licence levels) ─────────────────
@@ -148,6 +199,8 @@ jobs:
   #     azure-tenant-id:               ${{ secrets.TEST_MAIN_AZURE_TENANT_ID }}
   #     dataverse-service-account-upn: ${{ secrets.TEST_MAIN_DATAVERSE_SERVICE_ACCOUNT_UPN }}
 
+  # ── deploy-prod (A): GitHub Free — manual re-trigger + gate tag ──────────────
+
   # deploy-prod:
   #   if: >
   #     github.event_name == 'workflow_dispatch' &&
@@ -162,6 +215,43 @@ jobs:
   #     build-run-id: ${{ inputs.build-run-id }}
   #     required-gate-tag: deployed/TEST-main/${{ inputs.build-run-id }}
   #     success-gate-tag:  deployed/PROD/${{ inputs.build-run-id }}
+  #     dataverse-url:             ${{ vars.PROD_DATAVERSE_URL }}
+  #     dataverse-connection-refs: ${{ vars.PROD_DATAVERSE_CONN_REFS }}
+  #     dataverse-env-vars:        ${{ vars.PROD_DATAVERSE_ENV_VARS }}
+  #   secrets:
+  #     azure-client-id:               ${{ secrets.PROD_AZURE_CLIENT_ID }}
+  #     azure-client-secret:           ${{ secrets.PROD_AZURE_CLIENT_SECRET }}
+  #     azure-tenant-id:               ${{ secrets.PROD_AZURE_TENANT_ID }}
+  #     dataverse-service-account-upn: ${{ secrets.PROD_DATAVERSE_SERVICE_ACCOUNT_UPN }}
+
+  # ── deploy-prod (B): GitHub Pro/Team/Enterprise — auto-chain + approval gate ─
+  # To use instead of (A): see comments on the Approach 1/2 (B) block above.
+
+  # deploy-prod:
+  #   needs: deploy-test
+  #   if: >-
+  #     always() && (
+  #       (github.event_name == 'workflow_run' &&
+  #        needs.deploy-test.result == 'success') ||
+  #       (github.event_name == 'workflow_dispatch' &&
+  #        inputs.target-environment == 'PROD')
+  #     )
+  #   uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy-environment-reusable.yml@stable
+  #   permissions:
+  #     actions: read
+  #     contents: write
+  #     id-token: write
+  #   with:
+  #     environment-name: PROD
+  #     build-run-id: >-
+  #       ${{ github.event_name == 'workflow_dispatch'
+  #             && inputs.build-run-id
+  #             || github.event.workflow_run.id }}
+  #     # No required-gate-tag: environment protection rule is the gate.
+  #     success-gate-tag: >-
+  #       deployed/PROD/${{ github.event_name == 'workflow_dispatch'
+  #             && inputs.build-run-id
+  #             || github.event.workflow_run.id }}
   #     dataverse-url:             ${{ vars.PROD_DATAVERSE_URL }}
   #     dataverse-connection-refs: ${{ vars.PROD_DATAVERSE_CONN_REFS }}
   #     dataverse-env-vars:        ${{ vars.PROD_DATAVERSE_ENV_VARS }}

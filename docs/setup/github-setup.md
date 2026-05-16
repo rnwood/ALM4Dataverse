@@ -217,29 +217,12 @@ In the environment settings, you can add:
 
 #### 1.4 Configure your DEPLOY workflow (WIF)
 
-`DEPLOY-main.yml` contains a job per environment.  Each job has an independent `if:` condition:
+`DEPLOY-main.yml` contains a job per environment, with a choice of two promotion strategies.
+
+**`deploy-test`** — identical for both strategies:
 
 ```yaml
-on:
-  workflow_run:
-    workflows: ['BUILD']
-    types: [completed]
-    branches: [main]
-  workflow_dispatch:
-    inputs:
-      build-run-id:
-        description: 'BUILD workflow run ID to deploy'
-        required: true
-        type: string
-      target-environment:
-        description: 'Target environment'
-        required: true
-        type: choice
-        options: [TEST-main, PROD]
-
-jobs:
   deploy-test:
-    # Runs automatically when BUILD succeeds, or when TEST-main is selected manually.
     if: >
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success') ||
@@ -260,11 +243,13 @@ jobs:
         deployed/TEST-main/${{ github.event_name == 'workflow_dispatch'
               && inputs.build-run-id
               || github.event.workflow_run.id }}
-    secrets: inherit   # passes AZURE_CLIENT_ID, AZURE_TENANT_ID (no client secret needed)
+    secrets: inherit
+```
 
+**`deploy-prod` — Strategy A: GitHub Free (default)** — Manual re-trigger with gate tag.  A human goes to **Actions > DEPLOY-main > Run workflow**, selects PROD, and enters the BUILD run ID.  The job checks the gate tag to confirm TEST passed before proceeding.
+
+```yaml
   deploy-prod:
-    # Manual only — runs when PROD is selected.
-    # Gate: fails immediately if TEST was not successfully deployed for this build.
     if: >
       github.event_name == 'workflow_dispatch' &&
       inputs.target-environment == 'PROD'
@@ -281,11 +266,40 @@ jobs:
     secrets: inherit
 ```
 
-See [Deployment Gates for GitHub Free](#deployment-gates-for-github-free) for details.
+**`deploy-prod` — Strategy B: GitHub Pro/Team/Enterprise (opt-in)** — Auto-chains after TEST and is paused by the environment protection rule until an approver clicks **Approve**.  No manual re-trigger required.
 
-> ⚠️ If using GitHub Pro/Team/Enterprise you can alternatively chain environments with
-> `needs:` and rely on environment protection rules for approval gates instead of the
-> gate tag mechanism.
+To use: comment out Strategy A and uncomment this block.  Also add **Required reviewers** to the PROD environment in Settings > Environments.
+
+```yaml
+  deploy-prod:
+    needs: deploy-test
+    if: >-
+      always() && (
+        (github.event_name == 'workflow_run' &&
+         needs.deploy-test.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.target-environment == 'PROD')
+      )
+    uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy-environment-reusable.yml@stable
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    with:
+      environment-name: PROD
+      build-run-id: >-
+        ${{ github.event_name == 'workflow_dispatch'
+              && inputs.build-run-id
+              || github.event.workflow_run.id }}
+      # No required-gate-tag: the environment protection rule is the approval gate.
+      success-gate-tag: >-
+        deployed/PROD/${{ github.event_name == 'workflow_dispatch'
+              && inputs.build-run-id
+              || github.event.workflow_run.id }}
+    secrets: inherit
+```
+
+See [Deployment Gates for GitHub Free](#deployment-gates-for-github-free) for full details.
 
 ---
 
@@ -380,7 +394,11 @@ For dev environments used in EXPORT/IMPORT, use a prefix like `DEV_MAIN_`.
 
 #### 3.2 Configure your DEPLOY workflow (prefixed secrets)
 
-`DEPLOY-main.yml` contains a job per environment with explicit secret/variable mapping:
+`DEPLOY-main.yml` contains a job per environment with explicit secret/variable mapping.
+The same two strategies apply — see [1.4](#14-configure-your-deploy-workflow-wif) for the
+`deploy-prod` variants; only the credential wiring differs.
+
+**Strategy A (GitHub Free default):**
 
 ```yaml
 jobs:
@@ -428,6 +446,43 @@ jobs:
       build-run-id: ${{ inputs.build-run-id }}
       required-gate-tag: deployed/TEST-main/${{ inputs.build-run-id }}
       success-gate-tag:  deployed/PROD/${{ inputs.build-run-id }}
+      dataverse-url:             ${{ vars.PROD_DATAVERSE_URL }}
+      dataverse-connection-refs: ${{ vars.PROD_DATAVERSE_CONN_REFS }}
+      dataverse-env-vars:        ${{ vars.PROD_DATAVERSE_ENV_VARS }}
+    secrets:
+      azure-client-id:               ${{ secrets.PROD_AZURE_CLIENT_ID }}
+      azure-client-secret:           ${{ secrets.PROD_AZURE_CLIENT_SECRET }}
+      azure-tenant-id:               ${{ secrets.PROD_AZURE_TENANT_ID }}
+      dataverse-service-account-upn: ${{ secrets.PROD_DATAVERSE_SERVICE_ACCOUNT_UPN }}
+```
+
+**Strategy B (GitHub Pro/Team/Enterprise — auto-chain):** swap `deploy-prod` for:
+
+```yaml
+  deploy-prod:
+    needs: deploy-test
+    if: >-
+      always() && (
+        (github.event_name == 'workflow_run' &&
+         needs.deploy-test.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.target-environment == 'PROD')
+      )
+    uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy-environment-reusable.yml@stable
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    with:
+      environment-name: PROD
+      build-run-id: >-
+        ${{ github.event_name == 'workflow_dispatch'
+              && inputs.build-run-id
+              || github.event.workflow_run.id }}
+      success-gate-tag: >-
+        deployed/PROD/${{ github.event_name == 'workflow_dispatch'
+              && inputs.build-run-id
+              || github.event.workflow_run.id }}
       dataverse-url:             ${{ vars.PROD_DATAVERSE_URL }}
       dataverse-connection-refs: ${{ vars.PROD_DATAVERSE_CONN_REFS }}
       dataverse-env-vars:        ${{ vars.PROD_DATAVERSE_ENV_VARS }}
@@ -513,10 +568,25 @@ To add a UAT stage between TEST and PROD:
 
 ### GitHub Pro/Team/Enterprise alternative
 
-If you have environment protection rules available, you can instead:
-- Chain environments with `needs:` in `DEPLOY-main.yml`
-- Add **Required reviewers** to each environment in Settings > Environments
-- Omit `required-gate-tag` / `success-gate-tag` entirely (protection rules enforce the gate)
+If you have environment protection rules available, use **Strategy B** in `DEPLOY-main.yml`
+to eliminate the manual re-trigger requirement:
+
+1. In `DEPLOY-main.yml`, **comment out** the Strategy A `deploy-prod` block and
+   **uncomment** the Strategy B block (the one with `needs: deploy-test`).
+2. In **Settings > Environments > PROD**, add **Required reviewers**.
+
+Flow with Strategy B:
+```
+BUILD (auto) → deploy-test (auto) → deploy-prod (queued, awaiting approval) → [approver clicks Approve] → deploy-prod (runs)
+```
+
+The `needs: deploy-test` ensures PROD only proceeds after TEST completes successfully.
+The environment protection rule pauses execution and notifies reviewers — no manual
+workflow re-trigger is needed.  The `success-gate-tag` is still pushed for auditability.
+
+The `always()` in `deploy-prod`'s `if:` condition means PROD can also be re-deployed
+directly by choosing it from the `target-environment` dropdown on a manual trigger,
+even when TEST is not re-running.
 
 ---
 
