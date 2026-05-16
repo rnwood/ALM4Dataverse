@@ -1,0 +1,104 @@
+name: Build
+
+# Reusable workflow: build artifacts from source and tag the commit.
+#
+# Call this from your repo's BUILD.yml:
+#   uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/build.yml@stable
+#
+# Outputs the GitHub Actions run ID so downstream DEPLOY workflows can
+# download the artifacts produced here.
+
+on:
+  workflow_call:
+    inputs:
+      alm-repository:
+        type: string
+        default: 'ALM4Dataverse/ALM4Dataverse'
+        description: 'ALM4Dataverse repository to use (change this if you are using a fork)'
+      alm-ref:
+        type: string
+        default: 'stable'
+        description: 'ALM4Dataverse git ref (tag or branch) to use'
+    outputs:
+      run-id:
+        description: 'The GitHub Actions run ID for this build (pass to DEPLOY as build-run-id)'
+        value: ${{ jobs.build.outputs.run-id }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write  # push git tag
+      actions: write   # upload artifacts
+    outputs:
+      run-id: ${{ github.run_id }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          path: self
+          fetch-depth: 1
+
+      - name: Checkout ALM4Dataverse
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.alm-repository }}
+          ref: ${{ inputs.alm-ref }}
+          path: alm
+
+      - name: Set build number
+        id: build-number
+        shell: pwsh
+        run: |
+          $date = Get-Date -format 'yyyy-MM-dd-HHmmss'
+          $repoName  = '${{ github.event.repository.name }}'
+          $branch    = '${{ github.ref_name }}' -replace '[^a-zA-Z0-9._/-]', '-'
+          $runNumber = '${{ github.run_number }}'
+          $buildNumber = "$repoName-$branch-$date-$runNumber"
+          echo "BUILD_NUMBER=$buildNumber" >> $env:GITHUB_ENV
+          Write-Host "Build number: $buildNumber"
+
+      - name: Install Dependencies and Build
+        shell: pwsh
+        working-directory: ${{ github.workspace }}/self
+        run: |
+          & "${{ github.workspace }}/alm/pipelines/scripts/installdependencies.ps1"
+          & "${{ github.workspace }}/alm/pipelines/scripts/build.ps1" `
+            -SourceDirectory "${{ github.workspace }}/self" `
+            -ArtifactStagingDirectory "${{ github.workspace }}/artifacts"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts
+          path: ${{ github.workspace }}/artifacts/
+          retention-days: 90
+
+      - name: Tag source with build version
+        shell: pwsh
+        working-directory: ${{ github.workspace }}/self
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rawBuildNumber = $env:BUILD_NUMBER
+          $sanitizedBuildNumber = $rawBuildNumber `
+            -replace '[^a-zA-Z0-9._/-]', '-' `
+            -replace '\.{2,}', '-' `
+            -replace '/{2,}', '/'
+          $sanitizedBuildNumber = $sanitizedBuildNumber.Trim('/', '.')
+          if ($sanitizedBuildNumber.EndsWith('.lock')) {
+            $sanitizedBuildNumber = $sanitizedBuildNumber -replace '\.lock$', '-lock'
+          }
+          if ([string]::IsNullOrWhiteSpace($sanitizedBuildNumber)) {
+            throw "Build number '$rawBuildNumber' cannot be converted to a valid git tag value"
+          }
+          $tagName = "v$sanitizedBuildNumber"
+          Write-Host "Tagging source repository with build version $tagName"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          if ($LASTEXITCODE -ne 0) { throw "git config user.email failed" }
+          git config user.name "${{ github.actor }}"
+          if ($LASTEXITCODE -ne 0) { throw "git config user.name failed" }
+          git tag -a "$tagName" -m "Build version $sanitizedBuildNumber"
+          if ($LASTEXITCODE -ne 0) { throw "git tag failed with exit code $LASTEXITCODE" }
+          git push origin "$tagName"
+          if ($LASTEXITCODE -ne 0) { throw "git push tag failed with exit code $LASTEXITCODE" }

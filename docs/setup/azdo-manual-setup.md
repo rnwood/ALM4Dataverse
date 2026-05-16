@@ -60,7 +60,7 @@ This repository contains the shared pipeline templates and scripts.
    cd ALM4Dataverse
    
    # Add the upstream repository as a remote
-   git remote add upstream https://github.com/rnwood/ALM4Dataverse.git
+   git remote add upstream https://github.com/ALM4Dataverse/ALM4Dataverse.git
    
    # Fetch only the stable tag from upstream (no other branches are imported)
    git fetch upstream refs/tags/stable:refs/tags/stable
@@ -72,7 +72,7 @@ This repository contains the shared pipeline templates and scripts.
    git push origin main
    ```
 
-> **Note**: The 'stable' tag always points to the latest stable release. You can also pin to a specific version tag (e.g., `v1.0.0`) by replacing `stable` with the version tag in the fetch and checkout commands (e.g., `git fetch upstream refs/tags/v1.0.0:refs/tags/v1.0.0` and `git checkout -b main v1.0.0`). Find available releases at https://github.com/rnwood/ALM4Dataverse/releases
+> **Note**: The 'stable' tag always points to the latest stable release. You can also pin to a specific version tag (e.g., `v1.0.0`) by replacing `stable` with the version tag in the fetch and checkout commands (e.g., `git fetch upstream refs/tags/v1.0.0:refs/tags/v1.0.0` and `git checkout -b main v1.0.0`). Find available releases at https://github.com/ALM4Dataverse/ALM4Dataverse/releases
 
 📖 **Reference**: [Create a Git repo](https://learn.microsoft.com/en-us/azure/devops/repos/git/create-new-repo)
 
@@ -229,14 +229,14 @@ Create a Service Connection for each Dataverse environment.
 
 ## 5. Variable Groups
 
-Variable groups store environment-specific configuration values. See the [Environment Variable Group documentation](../config/environment-variable-group.md) for detailed information about what variables to configure.
+Variable groups store environment-specific configuration values. See the [Environment Variable Group documentation](../config/azdo-environment-variable-group.md) for detailed information about what variables to configure.
 
 ### For Each Environment (Dev-main, TEST-main, UAT-main, PROD, etc.):
 
 1. Go to **Pipelines** > **Library**
 2. Click **+ Variable group**
 3. Name: `Environment-{EnvironmentName}` (e.g., `Environment-Dev-main`, `Environment-PROD`)
-4. Add the required variables (see [environment-variable-group.md](../config/environment-variable-group.md) for the full list)
+4. Add the required variables (see [azdo-environment-variable-group.md](../config/azdo-environment-variable-group.md) for the full list)
 5. Click **Save**
 
 ### Add Approval Check (for non-Dev environments):

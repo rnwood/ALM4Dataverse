@@ -1,6 +1,6 @@
 # Automated Setup
 
-> If you are unable to use the automated setup process, you can follow the instructions in the [manual setup guide](manual-setup.md).
+> If you are unable to use the automated setup process, you can follow the instructions in the [manual setup guide](azdo-manual-setup.md).
 
 ## Limitations
 
@@ -55,10 +55,10 @@ The easiest way to run setup is:
 2) Paste this in and hit enter.
 
    ```powershell
-   iwr https://github.com/rnwood/ALM4Dataverse/releases/latest/download/setup.ps1 | iex
+   iwr https://github.com/ALM4Dataverse/ALM4Dataverse/releases/latest/download/setup.ps1 | iex
    ```
 
-   > If you would like to review the script first (good practice) you can download the script and save it from https://github.com/rnwood/ALM4Dataverse/releases/latest/download/setup.ps1
+   > If you would like to review the script first (good practice) you can download the script and save it from https://github.com/ALM4Dataverse/ALM4Dataverse/releases/latest/download/setup.ps1
 
 3) Follow the instructions.
 

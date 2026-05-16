@@ -1,0 +1,39 @@
+name: EXPORT
+
+# Manually triggered: exports Dataverse solutions from your development environment
+# and commits the unpacked changes back to this branch.
+#
+# See docs/usage/exporting-changes.md and docs/setup/github-setup.md
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit-message:
+        description: 'Commit message for the exported changes'
+        required: true
+        type: string
+
+jobs:
+  export:
+    uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/export.yml@stable
+    permissions:
+      contents: write
+      id-token: write
+    with:
+      commit-message: ${{ inputs.commit-message }}
+      # Name of the GitHub environment that holds your dev Dataverse credentials.
+      # Convention: Dev-{branch}, e.g. Dev-main.
+      # For the prefixed global secrets approach omit this and pass credentials
+      # explicitly via the secrets: block below.
+      environment-name: Dev-${{ github.ref_name }}
+
+      # Optional — only needed when NOT using a GitHub environment named above.
+      # dataverse-url: ${{ vars.DEV_MAIN_DATAVERSE_URL }}
+
+    # Credentials come from the GitHub environment named above (WIF or client secret).
+    # When using the prefixed global secrets approach, pass them here instead:
+    secrets: inherit
+    # secrets:
+    #   azure-client-id:     ${{ secrets.DEV_MAIN_AZURE_CLIENT_ID }}
+    #   azure-client-secret: ${{ secrets.DEV_MAIN_AZURE_CLIENT_SECRET }}  # omit for WIF
+    #   azure-tenant-id:     ${{ secrets.DEV_MAIN_AZURE_TENANT_ID }}
