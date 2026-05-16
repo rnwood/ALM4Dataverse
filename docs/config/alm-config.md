@@ -122,13 +122,50 @@ This ensures that the same exact version of all dependencies is always used for 
 
 ### Import Timeout
 
-The `importTimeoutSeconds` setting controls how long each solution import is allowed to run before timing out. The default is 10800 seconds (3 hours).
+The `importTimeoutSeconds` setting controls how long each individual solution import operation is allowed to run before the deployment script cancels it. The default is 10800 seconds (3 hours).
 
 ```powershell
 importTimeoutSeconds = 10800
 ```
 
 Increase this value if solution imports time out in large or complex environments.
+
+> **Important — Azure DevOps pipeline job timeout**
+>
+> `importTimeoutSeconds` only controls the timeout inside the deployment script. Azure DevOps also enforces its own **job-level timeout** (`timeoutInMinutes`) which will kill the entire job if it is reached, regardless of `importTimeoutSeconds`.
+>
+> The pipeline templates do not set `timeoutInMinutes`, so the Azure DevOps account default applies:
+>
+> | Capacity type | Default job timeout | Maximum configurable |
+> |---|---|---|
+> | **Free / Microsoft-hosted (public project)** | 60 minutes | 360 minutes (6 hours) |
+> | **Free / Microsoft-hosted (private project)** | 60 minutes | 360 minutes (6 hours) |
+> | **Paid parallel jobs (Microsoft-hosted)** | 360 minutes (6 hours) | 360 minutes (6 hours) |
+> | **Self-hosted agents** | 60 minutes | No enforced maximum |
+>
+> If your `importTimeoutSeconds` exceeds the effective job timeout, the job will be killed by Azure DevOps first and `importTimeoutSeconds` will have no effect for that run. To avoid this, set `timeoutInMinutes` on the relevant deployment job in your pipeline YAML to at least `importTimeoutSeconds / 60` plus a small overhead for tool installation and connection steps.
+>
+> Example — extending the job timeout in `DEPLOY-main.yml`:
+>
+> ```yaml
+> - template: pipelines/templates/stages/deploy-environment.yml@ALM4Dataverse
+>   parameters:
+>     environmentName: Test-main
+>     timeoutInMinutes: 200  # must be >= importTimeoutSeconds / 60
+> ```
+>
+> Note: even with paid capacity, Microsoft-hosted agents are capped at 360 minutes. For imports that genuinely need more than 6 hours, use a **self-hosted agent** where no maximum is enforced.
+
+#### What to do after a timeout
+
+If a deployment job times out, the solution import may still be running inside Dataverse. **Do not immediately retry** — a concurrent import of the same solution can cause conflicts.
+
+1. Open the target Dataverse environment.
+2. Navigate to **Settings → Solutions → Solution history** (or go to **make.powerapps.com → Solutions → See history** for the relevant solution).
+3. Wait until the import operation shown there reaches a terminal state (**Succeeded** or **Failed**).
+4. Once the import has completed (successfully or not), it is safe to retry the pipeline stage.
+
+> **Future improvement:** Automating the detection of an in-progress import and waiting for it to complete is a planned enhancement.
 
 ## Advanced - Fork Configuration
 
