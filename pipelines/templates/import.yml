@@ -6,6 +6,7 @@ stages:
         pool: 
           vmImage: windows-2022
         displayName: 'Import'
+        timeoutInMinutes: 360  # maximum allowed on Microsoft-hosted agents (free and paid)
         steps:
         - checkout: self
           fetchDepth: 1
